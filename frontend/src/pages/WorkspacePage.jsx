@@ -4,6 +4,37 @@ import "../App.css";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const DEFAULT_WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID;
+const LANGUAGE_EXTENSIONS = {
+  python: ".py",
+  javascript: ".js",
+  typescript: ".ts",
+  java: ".java",
+  cpp: ".cpp",
+  "c++": ".cpp",
+  c: ".c",
+  csharp: ".cs",
+  "c#": ".cs",
+  go: ".go",
+  rust: ".rs",
+  php: ".php",
+  ruby: ".rb",
+  kotlin: ".kt",
+  swift: ".swift",
+  html: ".html",
+  css: ".css",
+  json: ".json",
+  xml: ".xml",
+  sql: ".sql",
+  bash: ".sh",
+  shell: ".sh",
+};
+
+export function getFileName(file) {
+  const name = file?.name || "";
+  const extension = LANGUAGE_EXTENSIONS[file?.language?.trim().toLowerCase()];
+  if (!extension || name.toLowerCase().endsWith(extension)) return name;
+  return `${name}${extension}`;
+}
 
 function flattenFiles(nodes = [], parent = "") {
   return nodes.flatMap((node) => {
@@ -23,11 +54,11 @@ function TreeItem({ node, depth = 0, selectedId, onSelect, expanded, onToggle })
         className={`tree-row ${!isFolder && selectedId === node.id ? "selected" : ""}`}
         style={{ "--depth": depth }}
         onClick={() => isFolder ? onToggle(node.id) : onSelect(node)}
-        title={node.name}
+        title={isFolder ? node.name : getFileName(node)}
       >
         <span className={`tree-chevron ${isOpen ? "open" : ""}`}>{isFolder ? "›" : ""}</span>
         <span className={`tree-icon ${isFolder ? "folder-icon" : "file-icon"}`}>{isFolder ? (isOpen ? "▾" : "▸") : "◦"}</span>
-        <span className="tree-name">{node.name}</span>
+        <span className="tree-name">{isFolder ? node.name : getFileName(node)}</span>
       </button>
       {isFolder && isOpen && (node.children || []).map((child) => (
         <TreeItem key={child.id} node={child} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} expanded={expanded} onToggle={onToggle} />
@@ -131,7 +162,7 @@ export default function WorkspacePage() {
         </aside>
         <section className="editor-panel">
           <div className="tab-strip">
-            {activeFile ? <div className="editor-tab active-tab"><span className="tab-file-icon">◦</span>{activeFile.name}<span className="tab-unsaved" title="Unsaved changes">●</span></div> : <div className="tab-empty">No file open</div>}
+            {activeFile ? <div className="editor-tab active-tab"><span className="tab-file-icon">◦</span>{getFileName(activeFile)}<span className="tab-unsaved" title="Unsaved changes">●</span></div> : <div className="tab-empty">No file open</div>}
             <div className="tab-spacer" />
             {notice && <div className="editor-notice">{notice}</div>}
           </div>
