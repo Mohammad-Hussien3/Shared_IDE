@@ -3,6 +3,10 @@ from django.urls import path
 from .views import (
     WorkspaceListCreateAPIView,
     WorkspaceDetailAPIView,
+    FolderListCreateAPIView,
+    FolderDetailAPIView,
+    FileListCreateAPIView,
+    FileDetailAPIView,
 )
 
 
@@ -13,6 +17,26 @@ urlpatterns = [
         name="workspace-list-create"
     ),
 
+    path(
+        "<uuid:workspace_id>/folders/",
+        FolderListCreateAPIView.as_view(),
+        name="workspace-folder-list-create",
+    ),
+    path(
+        "<uuid:workspace_id>/folders/<uuid:pk>/",
+        FolderDetailAPIView.as_view(),
+        name="workspace-folder-detail",
+    ),
+    path(
+        "<uuid:workspace_id>/files/",
+        FileListCreateAPIView.as_view(),
+        name="workspace-file-list-create",
+    ),
+    path(
+        "<uuid:workspace_id>/files/<uuid:pk>/",
+        FileDetailAPIView.as_view(),
+        name="workspace-file-detail",
+    ),
     path(
         "<uuid:pk>/",
         WorkspaceDetailAPIView.as_view(),

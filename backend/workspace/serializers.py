@@ -61,3 +61,53 @@ class WorkspaceTreeSerializer(serializers.ModelSerializer):
             )
 
         return children
+
+
+class FolderSerializer(serializers.ModelSerializer):
+    parent = serializers.PrimaryKeyRelatedField(
+        queryset=Folder.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = Folder
+        fields = ["id", "name", "parent", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def validate_parent(self, parent):
+        workspace = self.context["workspace"]
+        if parent is not None and parent.workspace_id != workspace.id:
+            raise serializers.ValidationError(
+                "Parent folder must belong to this workspace."
+            )
+        return parent
+
+
+class FileSerializer(serializers.ModelSerializer):
+    folder = serializers.PrimaryKeyRelatedField(
+        queryset=Folder.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = File
+        fields = [
+            "id",
+            "name",
+            "language",
+            "content",
+            "folder",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_folder(self, folder):
+        workspace = self.context["workspace"]
+        if folder is not None and folder.workspace_id != workspace.id:
+            raise serializers.ValidationError(
+                "Folder must belong to this workspace."
+            )
+        return folder
