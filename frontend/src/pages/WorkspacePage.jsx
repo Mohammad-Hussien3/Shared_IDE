@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import "../App.css";
 
@@ -45,6 +45,15 @@ function flattenFiles(nodes = [], parent = "") {
   });
 }
 
+function findFileById(nodes = [], fileId) {
+  for (const node of nodes) {
+    if (node.type === "file" && String(node.id) === String(fileId)) return node;
+    const nestedMatch = findFileById(node.children || [], fileId);
+    if (nestedMatch) return nestedMatch;
+  }
+  return null;
+}
+
 function TreeItem({ node, depth = 0, selectedId, onSelect, expanded, onToggle }) {
   const isFolder = node.type === "folder";
   const isOpen = expanded.has(node.id);
@@ -75,14 +84,17 @@ function languageFor(file) {
 
 export default function WorkspacePage() {
   const [workspace, setWorkspace] = useState(null);
+  const [workspaceId, setWorkspaceId] = useState("");
   const [tree, setTree] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
-  const [contents, setContents] = useState({});
+  const [fileContent, setFileContent] = useState("");
+  const [contentsByFile, setContentsByFile] = useState({});
+  const [loadingFile, setLoadingFile] = useState(false);
+  const [fileError, setFileError] = useState("");
   const [expanded, setExpanded] = useState(new Set());
-  const [cursor, setCursor] = useState({ lineNumber: 1, column: 1 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const fileRequestId = useRef(0);
   const files = useMemo(() => flattenFiles(tree), [tree]);
 
   useEffect(() => {
@@ -92,6 +104,7 @@ export default function WorkspacePage() {
       setLoading(false);
       return;
     }
+    setWorkspaceId(workspaceId);
     if (!API_URL) {
       setError("VITE_API_URL is not configured.");
       setLoading(false);
@@ -117,10 +130,34 @@ export default function WorkspacePage() {
 
   const selectFile = useCallback(async (file) => {
     setActiveFile(file);
-    setNotice("");
-    if (Object.hasOwn(contents, file.id)) return;
-    setContents((current) => ({ ...current, [file.id]: "" }));
-  }, [contents]);
+    setFileError("");
+    const requestId = ++fileRequestId.current;
+    if (Object.hasOwn(contentsByFile, file.id)) {
+      setFileContent(contentsByFile[file.id]);
+      setLoadingFile(false);
+      return;
+    }
+    setFileContent("");
+    setLoadingFile(true);
+
+    try {
+      // The API has no file-detail route. Its workspace-detail response includes each file's content.
+      const response = await fetch(`${API_URL.replace(/\/$/, "")}/workspaces/${workspaceId}/`);
+      if (!response.ok) throw new Error(`File request failed (${response.status})`);
+      const workspaceData = await response.json();
+      const fetchedFile = findFileById(workspaceData.children || [], file.id);
+      if (!fetchedFile) throw new Error("File was not found in the workspace response.");
+      if (requestId === fileRequestId.current) {
+        const content = fetchedFile.content ?? "";
+        setFileContent(content);
+        setContentsByFile((current) => ({ ...current, [file.id]: content }));
+      }
+    } catch (err) {
+      if (requestId === fileRequestId.current) setFileError(err.message || "Could not load file content.");
+    } finally {
+      if (requestId === fileRequestId.current) setLoadingFile(false);
+    }
+  }, [workspaceId, contentsByFile]);
 
   const toggleFolder = (id) => setExpanded((current) => {
     const next = new Set(current);
@@ -128,29 +165,14 @@ export default function WorkspacePage() {
     return next;
   });
 
-  const createNode = (type) => {
-    const name = window.prompt(type === "file" ? "New file name" : "New folder name");
-    if (!name?.trim()) return;
-    const cleanName = name.trim();
-    const node = { id: `local-${Date.now()}`, name: cleanName, type, ...(type === "folder" ? { children: [] } : { language: languageFor({ name: cleanName }) }) };
-    setTree((current) => [...current, node]);
-    if (type === "file") selectFile(node);
-    setNotice(`${type === "file" ? "File" : "Folder"} added locally`);
-  };
-
-  const saveFile = () => setNotice(activeFile ? "Changes are saved in this session" : "Select a file before saving");
-  const runCode = () => setNotice("Run is not connected yet");
-  const activeLanguage = languageFor(activeFile);
-
   return (
     <main className="ide-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">⌘</span><span>Web IDE</span><span className="top-divider" /><span className="workspace-name">{workspace?.name || "Workspace"}</span></div>
-        <div className="top-actions"><button className="action-button" onClick={saveFile}><span>↓</span> Save</button><button className="run-button" onClick={runCode}><span>▶</span> Run</button></div>
       </header>
       <div className="ide-body">
         <aside className="explorer">
-          <div className="explorer-heading"><span>Explorer</span><div className="explorer-tools"><button title="New file" onClick={() => createNode("file")}>＋</button><button title="New folder" onClick={() => createNode("folder")}>▱</button><button title="Refresh workspace" onClick={() => window.location.reload()}>↻</button></div></div>
+          <div className="explorer-heading"><span>Explorer</span></div>
           <div className="workspace-root"><span className="root-chevron">⌄</span><span className="root-icon">◈</span>{workspace?.name || "WORKSPACE"}</div>
           <div className="tree-scroll">
             {loading && <div className="tree-message">Loading workspace…</div>}
@@ -162,16 +184,19 @@ export default function WorkspacePage() {
         </aside>
         <section className="editor-panel">
           <div className="tab-strip">
-            {activeFile ? <div className="editor-tab active-tab"><span className="tab-file-icon">◦</span>{getFileName(activeFile)}<span className="tab-unsaved" title="Unsaved changes">●</span></div> : <div className="tab-empty">No file open</div>}
+            {activeFile ? <div className="editor-tab active-tab"><span className="tab-file-icon">◦</span>{getFileName(activeFile)}</div> : <div className="tab-empty">No file open</div>}
             <div className="tab-spacer" />
-            {notice && <div className="editor-notice">{notice}</div>}
           </div>
           <div className="editor-area">
-            {activeFile ? <Editor height="100%" theme="vs-dark" language={activeLanguage} value={contents[activeFile.id] ?? ""} onChange={(value) => setContents((current) => ({ ...current, [activeFile.id]: value ?? "" }))} onMount={(editor) => editor.onDidChangeCursorPosition(({ position }) => setCursor({ lineNumber: position.lineNumber, column: position.column }))} options={{ fontSize: 14, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace", minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 16 }, lineNumbersMinChars: 3, renderLineHighlight: "line", overviewRulerBorder: false }} /> : <div className="welcome-state"><div className="welcome-glyph">{loading ? "◌" : "⌘"}</div><p>{loading ? "Opening your workspace…" : "Select a file to start coding"}</p><span>{error || (files.length ? "Choose a file from the Explorer" : "Your editor is ready when you are")}</span></div>}
+            {activeFile ? (loadingFile ? <div className="welcome-state"><p>Loading file…</p></div> : fileError ? <div className="welcome-state"><p>{fileError}</p></div> : <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onChange={(value) => {
+              const content = value ?? "";
+              setFileContent(content);
+              setContentsByFile((current) => ({ ...current, [activeFile.id]: content }));
+            }} options={{ fontSize: 14, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace", minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 16 }, lineNumbersMinChars: 3, renderLineHighlight: "line", overviewRulerBorder: false }} />) : <div className="welcome-state"><div className="welcome-glyph">{loading ? "◌" : "⌘"}</div><p>{loading ? "Opening your workspace…" : "Select a file to view its content"}</p><span>{error || (files.length ? "Choose a file from the Explorer" : "Your workspace is empty")}</span></div>}
           </div>
         </section>
       </div>
-      <footer className="statusbar"><div className="status-left"><span><i className="status-branch">⑂</i> main</span><span>◌ 0 errors</span></div><div className="status-right"><span>{activeLanguage[0]?.toUpperCase() + activeLanguage.slice(1)}</span><span>UTF-8</span><span>LF</span><span>Ln {cursor.lineNumber}, Col {cursor.column}</span><span className="status-bell">◉</span></div></footer>
+      <footer className="statusbar"><div className="status-left"><span>{workspace?.name || "Workspace"}</span></div><div className="status-right"><span>{activeFile ? languageFor(activeFile) : "Ready"}</span><span>UTF-8</span></div></footer>
     </main>
   );
 }

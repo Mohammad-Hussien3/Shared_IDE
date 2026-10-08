@@ -7,7 +7,7 @@ class FileTreeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = File
-        fields = ["id", "name", "type", "language"]
+        fields = ["id", "name", "type", "language", 'content']
 
     def get_type(self, obj):
         return "file"
