@@ -4,14 +4,14 @@ from rest_framework.generics import (
 )
 
 from .models import Workspace
-from .serializers import WorkspaceSerializer
+from .serializers import WorkspaceTreeSerializer
 
 
 class WorkspaceListCreateAPIView(ListCreateAPIView):
     queryset = Workspace.objects.all()
-    serializer_class = WorkspaceSerializer
+    serializer_class = WorkspaceTreeSerializer
 
 
 class WorkspaceDetailAPIView(RetrieveAPIView):
     queryset = Workspace.objects.all()
-    serializer_class = WorkspaceSerializer
+    serializer_class = WorkspaceTreeSerializer
