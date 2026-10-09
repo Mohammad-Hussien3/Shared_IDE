@@ -97,7 +97,7 @@ class FileRunAPIView(WorkspaceScopedMixin, APIView):
                 {
                     "detail": (
                         f"Detected {language}, but execution is currently supported "
-                        "only for Python (.py) and C++ (.cpp)."
+                        "only for Python (.py), C (.c), and C++ (.cpp)."
                     ),
                     "language": language,
                 },

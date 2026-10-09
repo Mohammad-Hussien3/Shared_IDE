@@ -24,7 +24,7 @@ EXTENSION_LANGUAGES = {
     ".sh": "bash",
 }
 
-SUPPORTED_RUNNERS = {"python", "cpp"}
+SUPPORTED_RUNNERS = {"python", "c", "cpp"}
 
 
 def language_from_filename(filename):
@@ -54,6 +54,10 @@ def language_from_content(source):
         r"\bfunction\s+\w+\s*\(",
     )
     java_markers = (r"\bpublic\s+class\s+\w+", r"\bstatic\s+void\s+main\s*\(")
+    c_markers = (
+        r"(?m)^\s*#\s*include\s*[<\"](?:stdio|stdlib|string|stdbool|stdint)\.h[>\"]",
+        r"\b(?:printf|scanf|puts|fopen|malloc|free)\s*\(",
+    )
     cpp_markers = (
         r"(?m)^\s*#\s*include\s*[<\"](?:iostream|bits/stdc\+\+\.h)[>\"]",
         r"\bstd::(?:cout|cin|cerr)\b",
@@ -67,6 +71,8 @@ def language_from_content(source):
         evidence.append("javascript")
     if any(re.search(marker, source) for marker in java_markers):
         evidence.append("java")
+    if any(re.search(marker, source) for marker in c_markers):
+        evidence.append("c")
     if any(re.search(marker, source) for marker in cpp_markers):
         evidence.append("cpp")
     return evidence[0] if len(evidence) == 1 else None

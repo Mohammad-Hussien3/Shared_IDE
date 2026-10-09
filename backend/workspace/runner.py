@@ -32,15 +32,17 @@ def run_program(language, source):
         image = PYTHON_RUNNER_IMAGE
         program = ["python", "-c", source]
         memory = "128m"
-    elif language == "cpp":
+    elif language in {"c", "cpp"}:
         image = CPP_RUNNER_IMAGE
         encoded_source = base64.b64encode(source.encode("utf-8")).decode("ascii")
+        source_name = "main.c" if language == "c" else "main.cpp"
+        compiler = "gcc -std=c17" if language == "c" else "g++ -std=c++17"
         program = [
             "/bin/sh",
             "-c",
             "printf '%s' " + encoded_source
-            + " | base64 -d > /work/main.cpp"
-            + " && g++ -std=c++17 -O2 -pipe /work/main.cpp -o /work/main"
+            + f" | base64 -d > /work/{source_name}"
+            + f" && {compiler} -O2 -pipe /work/{source_name} -o /work/main"
             + " && /work/main",
         ]
         memory = "256m"

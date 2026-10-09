@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Workspace, Folder, File
+from .execution import language_from_filename
 
 
 class FileTreeSerializer(serializers.ModelSerializer):
@@ -111,6 +112,24 @@ class FileSerializer(serializers.ModelSerializer):
                 "Folder must belong to this workspace."
             )
         return folder
+
+    def validate(self, attrs):
+        if "name" in attrs or "language" in attrs:
+            name = attrs.get("name", getattr(self.instance, "name", ""))
+            language = attrs.get(
+                "language", getattr(self.instance, "language", "")
+            )
+            filename_language = language_from_filename(name)
+            aliases = {"c++": "cpp", "c#": "csharp", "shell": "bash"}
+            normalized_language = aliases.get(language.strip().lower(), language.strip().lower())
+            if filename_language and normalized_language != filename_language:
+                raise serializers.ValidationError({
+                    "language": (
+                        f"The {name.rsplit('.', 1)[-1]} extension requires "
+                        f"language '{filename_language}'."
+                    )
+                })
+        return attrs
 
 
 class RunFileRequestSerializer(serializers.Serializer):

@@ -47,6 +47,51 @@ function languageFromFilename(name) {
   return EXTENSION_LANGUAGES[extension] || "";
 }
 
+function detectLanguageFromContent(source) {
+  const signatures = {
+    python: [
+      /^\s*(?:async\s+)?def\s+\w+\s*\(/m,
+      /^\s*(?:from\s+[\w.]+\s+import|import\s+[\w.]+)/m,
+      /\b(?:None|True|False|lambda|self)\b/,
+      /\bprint\s*\(/,
+    ],
+    c: [
+      /^\s*#\s*include\s*[<"](?:stdio|stdlib|string|stdbool|stdint)\.h[>"]/m,
+      /\b(?:printf|scanf|puts|fopen|malloc|free)\s*\(/,
+    ],
+    cpp: [
+      /^\s*#\s*include\s*[<"](?:iostream|bits\/stdc\+\+\.h)[>"]/m,
+      /\bstd::(?:cout|cin|cerr)\b/,
+      /\b(?:cout|cin)\s*<</,
+    ],
+  };
+  const candidates = Object.entries(signatures)
+    .filter(([, markers]) => markers.some((marker) => marker.test(source)))
+    .map(([language]) => language);
+  return candidates.length === 1 ? candidates[0] : "";
+}
+
+function replaceFileInTree(nodes, fileId, updatedFile) {
+  return nodes.map((node) => {
+    if (node.type === "file" && String(node.id) === String(fileId)) {
+      return { ...node, ...updatedFile, type: "file" };
+    }
+    if (node.type === "folder") {
+      return { ...node, children: replaceFileInTree(node.children || [], fileId, updatedFile) };
+    }
+    return node;
+  });
+}
+
+function askForLanguage() {
+  const answer = window.prompt(
+    "I couldn't confidently detect the language. Type python, c, or cpp to choose one.",
+  );
+  const normalized = answer?.trim().toLowerCase();
+  const language = normalized === "c++" ? "cpp" : normalized;
+  return ["python", "c", "cpp"].includes(language) ? language : "";
+}
+
 function normalizeFilename(name, language) {
   const extension = LANGUAGE_EXTENSIONS[LANGUAGE_ALIASES[language] || language];
   if (!extension) return name;
@@ -409,11 +454,52 @@ export default function WorkspacePage() {
       setRunError("Select a file before running code.");
       return;
     }
+    if (loadingFile) {
+      setRunError("Wait for the selected file to finish loading before running it.");
+      return;
+    }
 
     setRunning(true);
     try {
+      const filenameHasExtension = hasFilenameExtension(activeFile.name);
+      let language;
+      if (filenameHasExtension) {
+        language = languageFromFilename(activeFile.name);
+        if (!language) {
+          throw new Error(
+            `The .${activeFile.name.split(".").at(-1)} extension is not recognized. Rename the file with a supported extension before running it.`,
+          );
+        }
+      } else {
+        language = detectLanguageFromContent(fileContent) || askForLanguage();
+        if (!language) {
+          throw new Error("Choose python, c, or cpp to run this file. It was not renamed.");
+        }
+      }
+
+      const newName = filenameHasExtension
+        ? activeFile.name
+        : `${activeFile.name}${LANGUAGE_EXTENSIONS[language]}`;
+      const currentLanguage = LANGUAGE_ALIASES[activeFile.language?.trim().toLowerCase()]
+        || activeFile.language?.trim().toLowerCase()
+        || "";
+      let runFileRecord = activeFile;
+      if (newName !== activeFile.name || currentLanguage !== language) {
+        runFileRecord = await responseData(await fetch(
+          `${API_BASE_URL}/workspaces/${workspaceId}/files/${activeFile.id}/`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName, language }),
+          },
+        ));
+        runFileRecord = { ...activeFile, ...runFileRecord, name: newName, language, type: "file" };
+        setActiveFile((current) => current?.id === activeFile.id ? runFileRecord : current);
+        setTree((current) => replaceFileInTree(current, activeFile.id, runFileRecord));
+      }
+
       const result = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/files/${activeFile.id}/run/`,
+        `${API_BASE_URL}/workspaces/${workspaceId}/files/${runFileRecord.id}/run/`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -432,7 +518,7 @@ export default function WorkspacePage() {
     <main className="ide-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">⌘</span><span>Web IDE</span><span className="top-divider" /><span className="workspace-name">{workspace?.name || "Workspace"}</span></div>
-        <div className="top-actions"><span className={`save-status ${saveStatus.startsWith("Save failed") ? "save-error" : ""}`}>{saveStatus}</span><button className="run-button" onClick={runFile} disabled={running}>{running ? "Running…" : "▶ Run"}</button><button className="action-button" onClick={saveFile} disabled={!activeFile || saveStatus === "Saving…"}>Save Content</button></div>
+        <div className="top-actions"><span className={`save-status ${saveStatus.startsWith("Save failed") ? "save-error" : ""}`}>{saveStatus}</span><button className="run-button" onClick={runFile} disabled={running || loadingFile}>{running ? "Running…" : "▶ Run"}</button><button className="action-button" onClick={saveFile} disabled={!activeFile || saveStatus === "Saving…"}>Save Content</button></div>
       </header>
       <div className="ide-body">
         <aside className="explorer">

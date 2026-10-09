@@ -87,6 +87,61 @@ class WorkspaceResourceAPITests(APITestCase):
         self.assertEqual(self.client.delete(detail_url).status_code, 204)
         self.assertFalse(File.objects.filter(pk=file_id).exists())
 
+    def test_file_extension_and_language_must_match_on_rename(self):
+        file = File.objects.create(
+            workspace=self.workspace,
+            name="main",
+            language="",
+            content="preserve me",
+        )
+        detail_url = reverse(
+            "workspace-file-detail",
+            kwargs={"workspace_id": self.workspace.id, "pk": file.id},
+        )
+        response = self.client.patch(
+            detail_url,
+            {"name": "main.py", "language": "cpp"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        file.refresh_from_db()
+        self.assertEqual(file.name, "main")
+        self.assertEqual(file.language, "")
+        self.assertEqual(file.content, "preserve me")
+
+    def test_extensionless_file_can_be_renamed_without_changing_identity_or_content(self):
+        folder = Folder.objects.create(workspace=self.workspace, name="src")
+        file = File.objects.create(
+            workspace=self.workspace,
+            folder=folder,
+            name="main",
+            language="",
+            content="print('still here')",
+        )
+        detail_url = reverse(
+            "workspace-file-detail",
+            kwargs={"workspace_id": self.workspace.id, "pk": file.id},
+        )
+        response = self.client.patch(
+            detail_url,
+            {"name": "main.py", "language": "python"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        file.refresh_from_db()
+        self.assertEqual(str(file.id), response.data["id"])
+        self.assertEqual(file.name, "main.py")
+        self.assertEqual(file.language, "python")
+        self.assertEqual(file.workspace, self.workspace)
+        self.assertEqual(file.folder, folder)
+        self.assertEqual(file.content, "print('still here')")
+        tree = self.client.get(
+            reverse("workspace-detail", kwargs={"pk": self.workspace.id})
+        ).data["children"]
+        src = next(item for item in tree if item["id"] == str(folder.id))
+        self.assertEqual(src["children"][0]["name"], "main.py")
+        self.assertEqual(src["children"][0]["language"], "python")
+
     def test_cannot_assign_resources_from_another_workspace(self):
         other_folder = Folder.objects.create(
             workspace=self.other_workspace,
@@ -194,6 +249,22 @@ class FileRunAPITests(APITestCase):
         run_program.assert_called_once_with("python", "print('hello')")
 
     @patch("workspace.views.run_program")
+    def test_run_detects_extensionless_c_from_content(self, run_program):
+        self.file.name = "hello"
+        self.file.save(update_fields=["name"])
+        run_program.return_value = {
+            "stdout": "hello from c\n", "stderr": "", "exit_code": 0,
+            "timed_out": False, "output_limited": False,
+        }
+        source = '#include <stdio.h>\nint main(void) { puts("hello from c"); }'
+        response = self.client.post(
+            self.run_url, {"content": source}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["language"], "c")
+        run_program.assert_called_once_with("c", source)
+
+    @patch("workspace.views.run_program")
     def test_run_detects_and_executes_cpp(self, run_program):
         self.file.name = "main.cpp"
         self.file.save(update_fields=["name"])
@@ -202,6 +273,22 @@ class FileRunAPITests(APITestCase):
             "timed_out": False, "output_limited": False,
         }
         source = '#include <iostream>\nint main() { std::cout << "hello from cpp\\n"; }'
+        response = self.client.post(
+            self.run_url, {"content": source}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["language"], "cpp")
+        run_program.assert_called_once_with("cpp", source)
+
+    @patch("workspace.views.run_program")
+    def test_run_detects_extensionless_cpp_from_content(self, run_program):
+        self.file.name = "program"
+        self.file.save(update_fields=["name"])
+        run_program.return_value = {
+            "stdout": "hello from cpp\n", "stderr": "", "exit_code": 0,
+            "timed_out": False, "output_limited": False,
+        }
+        source = '#include <iostream>\nint main() { std::cout << "hello"; }'
         response = self.client.post(
             self.run_url, {"content": source}, format="json"
         )
