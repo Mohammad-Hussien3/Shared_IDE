@@ -248,6 +248,8 @@ export default function WorkspacePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [manualSaving, setManualSaving] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -256,10 +258,20 @@ export default function WorkspacePage() {
   const [renameError, setRenameError] = useState("");
   const [renameSaving, setRenameSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [runStage, setRunStage] = useState("");
   const [showOutput, setShowOutput] = useState(false);
   const [runResult, setRunResult] = useState(null);
   const [runError, setRunError] = useState("");
   const fileRequestId = useRef(0);
+  const runInProgressRef = useRef(false);
+  const saveInProgressRef = useRef(false);
+  const activeFileRef = useRef(activeFile);
+  const contentRevisionsRef = useRef(new Map());
+  const dirtyFilesRef = useRef(new Set());
+
+  useEffect(() => {
+    activeFileRef.current = activeFile;
+  }, [activeFile]);
   const files = useMemo(() => flattenFiles(tree), [tree]);
 
   useEffect(() => {
@@ -291,7 +303,8 @@ export default function WorkspacePage() {
   const selectFile = useCallback(async (file) => {
     setActiveFile(file);
     setFileError("");
-    setSaveStatus("");
+    setSaveStatus(dirtyFilesRef.current.has(file.id) ? "Unsaved" : "Saved");
+    setSaveError("");
     const requestId = ++fileRequestId.current;
     if (Object.hasOwn(contentsByFile, file.id)) {
       setFileContent(contentsByFile[file.id]);
@@ -374,7 +387,10 @@ export default function WorkspacePage() {
         setFileContent(created.content ?? "");
         setContentsByFile((current) => ({ ...current, [created.id]: created.content ?? "" }));
         setFileError("");
-        setSaveStatus("");
+        setSaveStatus("Saved");
+        setSaveError("");
+        contentRevisionsRef.current.set(file.id, 0);
+        dirtyFilesRef.current.delete(file.id);
         setActionMessage("File created");
       }
     } catch (err) {
@@ -386,18 +402,40 @@ export default function WorkspacePage() {
   };
 
   const saveFile = async () => {
-    if (!activeFile || !workspaceId) return;
+    if (!activeFile || !workspaceId || saveInProgressRef.current || runInProgressRef.current) return;
+    const fileId = activeFile.id;
+    const contentToSave = fileContent;
+    const revisionAtSave = contentRevisionsRef.current.get(fileId) || 0;
+    saveInProgressRef.current = true;
+    setManualSaving(true);
     setSaveStatus("Saving…");
+    setSaveError("");
     try {
       const updated = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/files/${activeFile.id}/`,
-        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: fileContent }) },
+        `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
+        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: contentToSave }) },
       ));
-      setContentsByFile((current) => ({ ...current, [activeFile.id]: updated.content ?? fileContent }));
-      setFileContent(updated.content ?? fileContent);
-      setSaveStatus("Saved");
+      const revisionAfterSave = contentRevisionsRef.current.get(fileId) || 0;
+      if (revisionAfterSave === revisionAtSave) {
+        const savedContent = updated.content ?? contentToSave;
+        dirtyFilesRef.current.delete(fileId);
+        setContentsByFile((current) => ({ ...current, [fileId]: savedContent }));
+        if (activeFileRef.current?.id === fileId) setFileContent(savedContent);
+      }
+      if (activeFileRef.current?.id === fileId) {
+        const stillDirty = (contentRevisionsRef.current.get(fileId) || 0) !== revisionAtSave;
+        setSaveStatus(stillDirty ? "Unsaved" : "Saved");
+        setSaveError("");
+      }
     } catch (err) {
-      setSaveStatus(`Save failed: ${err.message}`);
+      if (activeFileRef.current?.id === fileId) {
+        dirtyFilesRef.current.add(fileId);
+        setSaveStatus("Unsaved");
+        setSaveError(`Save failed: ${err.message}`);
+      }
+    } finally {
+      saveInProgressRef.current = false;
+      setManualSaving(false);
     }
   };
 
@@ -434,7 +472,7 @@ export default function WorkspacePage() {
         },
       ));
       await refreshWorkspaceTree();
-      setActiveFile((current) => current?.id === file.id ? { ...current, ...updated, type: "file" } : current);
+    setActiveFile((current) => current?.id === file.id ? { ...current, ...updated, type: "file" } : current);
       setRenamingFileId(null);
       setRenameValue("");
       setActionMessage("File renamed");
@@ -447,6 +485,7 @@ export default function WorkspacePage() {
   };
 
   const runFile = async () => {
+    if (runInProgressRef.current) return;
     setShowOutput(true);
     setRunResult(null);
     setRunError("");
@@ -458,8 +497,19 @@ export default function WorkspacePage() {
       setRunError("Wait for the selected file to finish loading before running it.");
       return;
     }
+    if (saveInProgressRef.current) {
+      setRunError("Wait for the current save to finish before running the file.");
+      return;
+    }
 
+    const fileId = activeFile.id;
+    const contentToRun = fileContent;
+    const revisionAtRun = contentRevisionsRef.current.get(fileId) || 0;
+    let saveAttempted = false;
+    let saveConfirmed = false;
+    runInProgressRef.current = true;
     setRunning(true);
+    setRunStage("saving");
     try {
       const filenameHasExtension = hasFilenameExtension(activeFile.name);
       let language;
@@ -480,36 +530,59 @@ export default function WorkspacePage() {
       const newName = filenameHasExtension
         ? activeFile.name
         : `${activeFile.name}${LANGUAGE_EXTENSIONS[language]}`;
-      const currentLanguage = LANGUAGE_ALIASES[activeFile.language?.trim().toLowerCase()]
-        || activeFile.language?.trim().toLowerCase()
-        || "";
-      let runFileRecord = activeFile;
-      if (newName !== activeFile.name || currentLanguage !== language) {
-        runFileRecord = await responseData(await fetch(
-          `${API_BASE_URL}/workspaces/${workspaceId}/files/${activeFile.id}/`,
-          {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newName, language }),
-          },
-        ));
-        runFileRecord = { ...activeFile, ...runFileRecord, name: newName, language, type: "file" };
-        setActiveFile((current) => current?.id === activeFile.id ? runFileRecord : current);
-        setTree((current) => replaceFileInTree(current, activeFile.id, runFileRecord));
+      saveAttempted = true;
+      setSaveStatus("Saving…");
+      setSaveError("");
+      const savedFile = await responseData(await fetch(
+        `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: contentToRun,
+            name: newName,
+            language,
+          }),
+        },
+      ));
+      saveConfirmed = true;
+      const revisionAfterSave = contentRevisionsRef.current.get(fileId) || 0;
+      if (revisionAfterSave !== revisionAtRun || activeFileRef.current?.id !== fileId) {
+        if (activeFileRef.current?.id === fileId) {
+          dirtyFilesRef.current.add(fileId);
+          setSaveStatus("Unsaved");
+          setSaveError("The file changed while saving. Run again to save and execute the latest edits.");
+        }
+        throw new Error("The file changed while saving. Run again to save and execute the latest edits.");
       }
+      dirtyFilesRef.current.delete(fileId);
+      setSaveStatus("Saved");
+      setSaveError("");
+      setContentsByFile((current) => ({ ...current, [fileId]: savedFile.content ?? contentToRun }));
+      const runFileRecord = { ...activeFile, ...savedFile, name: newName, language, type: "file" };
+      setActiveFile((current) => current?.id === activeFile.id ? runFileRecord : current);
+      setTree((current) => replaceFileInTree(current, activeFile.id, runFileRecord));
 
+      setRunStage("running");
       const result = await responseData(await fetch(
         `${API_BASE_URL}/workspaces/${workspaceId}/files/${runFileRecord.id}/run/`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: fileContent }),
+          body: JSON.stringify({ content: savedFile.content ?? contentToRun }),
         },
       ));
       setRunResult(result);
     } catch (err) {
+      if (saveAttempted && !saveConfirmed && activeFileRef.current?.id === fileId) {
+        dirtyFilesRef.current.add(fileId);
+        setSaveStatus("Unsaved");
+        setSaveError(`Save failed: ${err.message}`);
+      }
       setRunError(err.message || "Code execution failed.");
     } finally {
+      runInProgressRef.current = false;
+      setRunStage("");
       setRunning(false);
     }
   };
@@ -518,7 +591,7 @@ export default function WorkspacePage() {
     <main className="ide-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">⌘</span><span>Web IDE</span><span className="top-divider" /><span className="workspace-name">{workspace?.name || "Workspace"}</span></div>
-        <div className="top-actions"><span className={`save-status ${saveStatus.startsWith("Save failed") ? "save-error" : ""}`}>{saveStatus}</span><button className="run-button" onClick={runFile} disabled={running || loadingFile}>{running ? "Running…" : "▶ Run"}</button><button className="action-button" onClick={saveFile} disabled={!activeFile || saveStatus === "Saving…"}>Save Content</button></div>
+        <div className="top-actions"><span className={`save-status ${saveError || saveStatus === "Unsaved" ? "save-error" : ""}`}>{saveStatus}</span>{saveError && <span className="save-error" role="alert" title={saveError}>{saveError}</span>}<button className="run-button" onClick={runFile} disabled={running || loadingFile || manualSaving}>{runStage === "saving" ? "Saving…" : running ? "Running…" : "▶ Run"}</button><button className="action-button" onClick={saveFile} disabled={!activeFile || manualSaving || running}>Save Content</button></div>
       </header>
       <div className="ide-body">
         <aside className="explorer">
@@ -549,15 +622,19 @@ export default function WorkspacePage() {
           <div className="editor-area">
             {activeFile ? (loadingFile ? <div className="welcome-state"><p>Loading file…</p></div> : fileError ? <div className="welcome-state"><p>{fileError}</p></div> : <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onChange={(value) => {
               const content = value ?? "";
+              contentRevisionsRef.current.set(activeFile.id, (contentRevisionsRef.current.get(activeFile.id) || 0) + 1);
+              dirtyFilesRef.current.add(activeFile.id);
               setFileContent(content);
               setContentsByFile((current) => ({ ...current, [activeFile.id]: content }));
-              setSaveStatus("Unsaved changes");
+              setSaveStatus("Unsaved");
+              setSaveError("");
             }} options={{ fontSize: 14, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace", minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 16 }, lineNumbersMinChars: 3, renderLineHighlight: "line", overviewRulerBorder: false }} />) : <div className="welcome-state"><div className="welcome-glyph">{loading ? "◌" : "⌘"}</div><p>{loading ? "Opening your workspace…" : "Select a file to view its content"}</p><span>{error || (files.length ? "Choose a file from the Explorer" : "Your workspace is empty")}</span></div>}
           </div>
           {showOutput && <section className="output-panel" aria-live="polite">
             <div className="output-heading"><span>Run Output</span><button onClick={() => setShowOutput(false)} aria-label="Close output panel">×</button></div>
             <div className="output-body">
-              {running && <div className="output-placeholder">Running in an isolated container…</div>}
+              {runStage === "saving" && <div className="output-placeholder">Saving the latest editor content before execution…</div>}
+              {runStage === "running" && <div className="output-placeholder">Running in an isolated container…</div>}
               {runError && <pre className="output-error">{runError}</pre>}
               {runResult && <>
                 <div className={`run-summary ${runResult.exit_code === 0 && !runResult.timed_out ? "" : "output-error"}`}>
