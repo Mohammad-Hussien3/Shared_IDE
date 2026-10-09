@@ -29,11 +29,41 @@ const LANGUAGE_EXTENSIONS = {
   bash: ".sh",
   shell: ".sh",
 };
+const EXTENSION_LANGUAGES = {
+  py: "python", js: "javascript", ts: "typescript", java: "java", cpp: "cpp",
+  c: "c", cs: "csharp", go: "go", rs: "rust", php: "php", rb: "ruby",
+  kt: "kotlin", swift: "swift", html: "html", css: "css", json: "json",
+  xml: "xml", sql: "sql", sh: "bash",
+};
+const LANGUAGE_ALIASES = { "c++": "cpp", "c#": "csharp", shell: "bash" };
+
+function hasFilenameExtension(name) {
+  return /\.[^./\\]+$/.test(name) && name.lastIndexOf(".") > 0;
+}
+
+function languageFromFilename(name) {
+  if (!hasFilenameExtension(name)) return "";
+  const extension = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+  return EXTENSION_LANGUAGES[extension] || "";
+}
+
+function normalizeFilename(name, language) {
+  const extension = LANGUAGE_EXTENSIONS[LANGUAGE_ALIASES[language] || language];
+  if (!extension) return name;
+  let normalized = name;
+  while (normalized.toLowerCase().endsWith(extension + extension)) {
+    normalized = normalized.slice(0, -extension.length);
+  }
+  return normalized;
+}
 
 export function getFileName(file) {
   const name = file?.name || "";
-  const extension = LANGUAGE_EXTENSIONS[file?.language?.trim().toLowerCase()];
-  if (!extension || name.toLowerCase().endsWith(extension)) return name;
+  if (hasFilenameExtension(name)) return name;
+  const storedLanguage = file?.language?.trim().toLowerCase();
+  const language = LANGUAGE_ALIASES[storedLanguage] || storedLanguage;
+  const extension = LANGUAGE_EXTENSIONS[language];
+  if (!extension) return name;
   return `${name}${extension}`;
 }
 
@@ -84,32 +114,79 @@ async function responseData(response) {
   return data;
 }
 
-function TreeItem({ node, depth = 0, selectedId, selectedFolderId, onSelect, onSelectFolder, expanded, onToggle }) {
+function TreeItem({
+  node, depth = 0, selectedId, selectedFolderId, onSelect, onSelectFolder,
+  expanded, onToggle, renamingFileId, renameValue, setRenameValue,
+  renameError, renameSaving, onStartRename, onSaveRename, onCancelRename,
+}) {
   const isFolder = node.type === "folder";
   const isOpen = expanded.has(node.id);
+  const isRenaming = !isFolder && renamingFileId === node.id;
+  const fileRow = (
+    <button
+      className={`tree-row ${selectedId === node.id ? "selected" : ""}`}
+      style={{ "--depth": depth }}
+      onClick={() => onSelect(node)}
+      title={getFileName(node)}
+    >
+      <span className="tree-chevron" />
+      <span className="tree-icon file-icon">◦</span>
+      <span className="tree-name">{getFileName(node)}</span>
+    </button>
+  );
   return (
     <>
-      <button
-        className={`tree-row ${(!isFolder && selectedId === node.id) || (isFolder && selectedFolderId === node.id) ? "selected" : ""}`}
-        style={{ "--depth": depth }}
-        onClick={() => isFolder ? (onSelectFolder(node), onToggle(node.id)) : onSelect(node)}
-        title={isFolder ? node.name : getFileName(node)}
-      >
-        <span className={`tree-chevron ${isOpen ? "open" : ""}`}>{isFolder ? "›" : ""}</span>
-        <span className={`tree-icon ${isFolder ? "folder-icon" : "file-icon"}`}>{isFolder ? (isOpen ? "▾" : "▸") : "◦"}</span>
-        <span className="tree-name">{isFolder ? node.name : getFileName(node)}</span>
-      </button>
+      {isFolder ? (
+        <button
+          className={`tree-row ${selectedFolderId === node.id ? "selected" : ""}`}
+          style={{ "--depth": depth }}
+          onClick={() => { onSelectFolder(node); onToggle(node.id); }}
+          title={node.name}
+        >
+          <span className={`tree-chevron ${isOpen ? "open" : ""}`}>{isOpen ? "▾" : "›"}</span>
+          <span className="tree-icon folder-icon">{isOpen ? "▾" : "▸"}</span>
+          <span className="tree-name">{node.name}</span>
+        </button>
+      ) : isRenaming ? (
+        <div className="rename-form" style={{ "--depth": depth }}>
+          <input
+            aria-label={`Rename ${getFileName(node)}`}
+            autoFocus
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") onSaveRename(node);
+              if (event.key === "Escape") onCancelRename();
+            }}
+          />
+          <button title="Save rename" onClick={() => onSaveRename(node)} disabled={renameSaving || !renameValue.trim()}>Save</button>
+          <button title="Cancel rename" onClick={onCancelRename} disabled={renameSaving}>Cancel</button>
+          {renameError && <span className="rename-error">{renameError}</span>}
+        </div>
+      ) : (
+        <div className="tree-file-row">
+          {fileRow}
+          <button className="rename-action" title={`Rename ${getFileName(node)}`} onClick={() => onStartRename(node)}>Rename</button>
+        </div>
+      )}
       {isFolder && isOpen && (node.children || []).map((child) => (
-        <TreeItem key={child.id} node={child} depth={depth + 1} selectedId={selectedId} selectedFolderId={selectedFolderId} onSelect={onSelect} onSelectFolder={onSelectFolder} expanded={expanded} onToggle={onToggle} />
+        <TreeItem
+          key={child.id} node={child} depth={depth + 1} selectedId={selectedId}
+          selectedFolderId={selectedFolderId} onSelect={onSelect} onSelectFolder={onSelectFolder}
+          expanded={expanded} onToggle={onToggle} renamingFileId={renamingFileId}
+          renameValue={renameValue} setRenameValue={setRenameValue} renameError={renameError}
+          renameSaving={renameSaving} onStartRename={onStartRename} onSaveRename={onSaveRename}
+          onCancelRename={onCancelRename}
+        />
       ))}
     </>
   );
 }
 
 function languageFor(file) {
-  const byExtension = { js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript", py: "python", html: "html", css: "css", json: "json", md: "markdown", sh: "shell" };
-  const ext = file?.name?.split(".").pop()?.toLowerCase();
-  return file?.language || byExtension[ext] || "plaintext";
+  const filenameLanguage = languageFromFilename(file?.name || "");
+  const storedLanguage = file?.language?.trim().toLowerCase();
+  return filenameLanguage || LANGUAGE_ALIASES[storedLanguage] || storedLanguage || "plaintext";
 }
 
 export default function WorkspacePage() {
@@ -129,6 +206,14 @@ export default function WorkspacePage() {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [renamingFileId, setRenamingFileId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameError, setRenameError] = useState("");
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [showOutput, setShowOutput] = useState(false);
+  const [runResult, setRunResult] = useState(null);
+  const [runError, setRunError] = useState("");
   const fileRequestId = useRef(0);
   const files = useMemo(() => flattenFiles(tree), [tree]);
 
@@ -221,9 +306,10 @@ export default function WorkspacePage() {
     try {
       const isFolder = type === "folder";
       const endpoint = isFolder ? "folders" : "files";
+      const cleanName = normalizeFilename(name.trim(), languageFromFilename(name.trim()));
       const payload = isFolder
-        ? { name: name.trim(), ...(selectedFolderId ? { parent: selectedFolderId } : {}) }
-        : { name: name.trim(), language: languageFor({ name: name.trim() }), content: "", ...(selectedFolderId ? { folder: selectedFolderId } : {}) };
+        ? { name: cleanName, ...(selectedFolderId ? { parent: selectedFolderId } : {}) }
+        : { name: cleanName, language: languageFromFilename(cleanName), content: "", ...(selectedFolderId ? { folder: selectedFolderId } : {}) };
       const created = await responseData(await fetch(
         `${API_BASE_URL}/workspaces/${workspaceId}/${endpoint}/`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
@@ -270,11 +356,83 @@ export default function WorkspacePage() {
     }
   };
 
+  const startRename = (file) => {
+    setRenamingFileId(file.id);
+    setRenameValue(getFileName(file));
+    setRenameError("");
+  };
+
+  const cancelRename = () => {
+    setRenamingFileId(null);
+    setRenameValue("");
+    setRenameError("");
+  };
+
+  const saveRename = async (file) => {
+    const inputName = renameValue.trim();
+    if (!inputName) {
+      setRenameError("Filename cannot be empty.");
+      return;
+    }
+    const recognizedLanguage = languageFromFilename(inputName);
+    const newName = normalizeFilename(inputName, recognizedLanguage);
+    const language = recognizedLanguage || "";
+    setRenameSaving(true);
+    setRenameError("");
+    try {
+      const updated = await responseData(await fetch(
+        `${API_BASE_URL}/workspaces/${workspaceId}/files/${file.id}/`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName, language }),
+        },
+      ));
+      await refreshWorkspaceTree();
+      setActiveFile((current) => current?.id === file.id ? { ...current, ...updated, type: "file" } : current);
+      setRenamingFileId(null);
+      setRenameValue("");
+      setActionMessage("File renamed");
+      setActionError(false);
+    } catch (err) {
+      setRenameError(err.message || "Could not rename file.");
+    } finally {
+      setRenameSaving(false);
+    }
+  };
+
+  const runFile = async () => {
+    setShowOutput(true);
+    setRunResult(null);
+    setRunError("");
+    if (!activeFile) {
+      setRunError("Select a file before running code.");
+      return;
+    }
+
+    setRunning(true);
+    try {
+      const result = await responseData(await fetch(
+        `${API_BASE_URL}/workspaces/${workspaceId}/files/${activeFile.id}/run/`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: fileContent }),
+        },
+      ));
+      setRunResult(result);
+    } catch (err) {
+      setRunError(err.message || "Code execution failed.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
   return (
     <main className="ide-shell">
       <header className="topbar">
         <div className="brand"><span className="brand-mark">⌘</span><span>Web IDE</span><span className="top-divider" /><span className="workspace-name">{workspace?.name || "Workspace"}</span></div>
-        <div className="top-actions"><span className={`save-status ${saveStatus.startsWith("Save failed") ? "save-error" : ""}`}>{saveStatus}</span><button className="action-button" onClick={saveFile} disabled={!activeFile || saveStatus === "Saving…"}>Save Content</button></div>
+        <div className="top-actions"><span className={`save-status ${saveStatus.startsWith("Save failed") ? "save-error" : ""}`}>{saveStatus}</span><button className="run-button" onClick={runFile} disabled={running}>{running ? "Running…" : "▶ Run"}</button><button className="action-button" onClick={saveFile} disabled={!activeFile || saveStatus === "Saving…"}>Save Content</button></div>
       </header>
       <div className="ide-body">
         <aside className="explorer">
@@ -286,7 +444,14 @@ export default function WorkspacePage() {
             {loading && <div className="tree-message">Loading workspace…</div>}
             {!loading && error && <div className="tree-message error-message">{error}</div>}
             {!loading && !error && tree.length === 0 && <div className="tree-message">This workspace is empty.</div>}
-            {tree.map((node) => <TreeItem key={node.id} node={node} selectedId={activeFile?.id} selectedFolderId={selectedFolderId} onSelect={selectFile} onSelectFolder={(folder) => setSelectedFolderId(folder.id)} expanded={expanded} onToggle={toggleFolder} />)}
+            {tree.map((node) => <TreeItem
+              key={node.id} node={node} selectedId={activeFile?.id} selectedFolderId={selectedFolderId}
+              onSelect={selectFile} onSelectFolder={(folder) => setSelectedFolderId(folder.id)}
+              expanded={expanded} onToggle={toggleFolder} renamingFileId={renamingFileId}
+              renameValue={renameValue} setRenameValue={setRenameValue} renameError={renameError}
+              renameSaving={renameSaving} onStartRename={startRename} onSaveRename={saveRename}
+              onCancelRename={cancelRename}
+            />)}
           </div>
           <div className="explorer-footer"><span className="online-dot" /> Workspace files</div>
         </aside>
@@ -303,6 +468,21 @@ export default function WorkspacePage() {
               setSaveStatus("Unsaved changes");
             }} options={{ fontSize: 14, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace", minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 16 }, lineNumbersMinChars: 3, renderLineHighlight: "line", overviewRulerBorder: false }} />) : <div className="welcome-state"><div className="welcome-glyph">{loading ? "◌" : "⌘"}</div><p>{loading ? "Opening your workspace…" : "Select a file to view its content"}</p><span>{error || (files.length ? "Choose a file from the Explorer" : "Your workspace is empty")}</span></div>}
           </div>
+          {showOutput && <section className="output-panel" aria-live="polite">
+            <div className="output-heading"><span>Run Output</span><button onClick={() => setShowOutput(false)} aria-label="Close output panel">×</button></div>
+            <div className="output-body">
+              {running && <div className="output-placeholder">Running in an isolated container…</div>}
+              {runError && <pre className="output-error">{runError}</pre>}
+              {runResult && <>
+                <div className={`run-summary ${runResult.exit_code === 0 && !runResult.timed_out ? "" : "output-error"}`}>
+                  {runResult.language} · {runResult.timed_out ? "Timed out" : `exit code ${runResult.exit_code}`}{runResult.output_limited ? " · output limit reached" : ""}
+                </div>
+                {runResult.stdout && <pre>{runResult.stdout}</pre>}
+                {runResult.stderr && <pre className="output-error">{runResult.stderr}</pre>}
+                {!runResult.stdout && !runResult.stderr && !runResult.timed_out && <div className="output-placeholder">Program completed without output.</div>}
+              </>}
+            </div>
+          </section>}
         </section>
       </div>
       <footer className="statusbar"><div className="status-left"><span>{workspace?.name || "Workspace"}</span></div><div className="status-right"><span>{activeFile ? languageFor(activeFile) : "Ready"}</span><span>UTF-8</span></div></footer>

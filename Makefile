@@ -21,3 +21,12 @@ install-frontend:
 
 build-frontend:
 	cd frontend && npm run build
+
+runner-images:
+	TMPDIR=/tmp podman pull docker.io/library/python:3.12-alpine
+	TMPDIR=/tmp podman pull docker.io/library/gcc:14
+
+runner-images-check:
+	podman image exists docker.io/library/python:3.12-alpine
+	podman image exists docker.io/library/gcc:14
+	podman info --format 'rootless={{.Host.Security.Rootless}} graphroot={{.Store.GraphRoot}}'

@@ -111,3 +111,7 @@ class FileSerializer(serializers.ModelSerializer):
                 "Folder must belong to this workspace."
             )
         return folder
+
+
+class RunFileRequestSerializer(serializers.Serializer):
+    content = serializers.CharField(allow_blank=True, max_length=65536)

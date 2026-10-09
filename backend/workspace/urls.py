@@ -7,6 +7,7 @@ from .views import (
     FolderDetailAPIView,
     FileListCreateAPIView,
     FileDetailAPIView,
+    FileRunAPIView,
 )
 
 
@@ -31,6 +32,11 @@ urlpatterns = [
         "<uuid:workspace_id>/files/",
         FileListCreateAPIView.as_view(),
         name="workspace-file-list-create",
+    ),
+    path(
+        "<uuid:workspace_id>/files/<uuid:pk>/run/",
+        FileRunAPIView.as_view(),
+        name="workspace-file-run",
     ),
     path(
         "<uuid:workspace_id>/files/<uuid:pk>/",

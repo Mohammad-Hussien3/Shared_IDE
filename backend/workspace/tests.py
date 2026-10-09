@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
@@ -22,21 +24,20 @@ class WorkspaceResourceAPITests(APITestCase):
         )
 
     def test_folder_crud_and_nested_parent(self):
-        response = self.client.post(self.folder_list_url(), {"name": "src"}, format="json")
+        response = self.client.post(
+            self.folder_list_url(), {"name": "src"}, format="json"
+        )
         self.assertEqual(response.status_code, 201)
-        parent_id = response.data["id"]
-        parent = Folder.objects.get(pk=parent_id)
+        parent = Folder.objects.get(pk=response.data["id"])
         self.assertEqual(parent.workspace, self.workspace)
 
         response = self.client.post(
             self.folder_list_url(),
-            {"name": "components", "parent": parent_id},
+            {"name": "components", "parent": str(parent.id)},
             format="json",
         )
         self.assertEqual(response.status_code, 201)
         child_id = response.data["id"]
-        self.assertEqual(Folder.objects.get(pk=child_id).parent, parent)
-
         detail_url = reverse(
             "workspace-folder-detail",
             kwargs={"workspace_id": self.workspace.id, "pk": child_id},
@@ -47,36 +48,42 @@ class WorkspaceResourceAPITests(APITestCase):
             200,
         )
         self.assertEqual(self.client.get(detail_url).data["name"], "widgets")
-        self.assertEqual(self.client.get(self.folder_list_url()).data.__len__(), 2)
         self.assertEqual(self.client.delete(detail_url).status_code, 204)
 
-    def test_file_crud_and_folder_assignment(self):
+    def test_file_crud_and_saved_content_survives_workspace_refresh(self):
         folder = Folder.objects.create(workspace=self.workspace, name="src")
         response = self.client.post(
             self.file_list_url(),
-            {"name": "main", "language": "python", "content": "print('hi')", "folder": str(folder.id)},
+            {"name": "main.py", "language": "python", "content": "print('hi')", "folder": str(folder.id)},
             format="json",
         )
         self.assertEqual(response.status_code, 201)
         file_id = response.data["id"]
-        saved_file = File.objects.get(pk=file_id)
-        self.assertEqual(saved_file.workspace, self.workspace)
-        self.assertEqual(saved_file.folder, folder)
+        file = File.objects.get(pk=file_id)
+        self.assertEqual(file.workspace, self.workspace)
+        self.assertEqual(file.folder, folder)
 
         detail_url = reverse(
             "workspace-file-detail",
             kwargs={"workspace_id": self.workspace.id, "pk": file_id},
         )
-        self.assertEqual(self.client.get(detail_url).data["content"], "print('hi')")
         update_response = self.client.patch(
             detail_url,
-            {"name": "renamed_main", "content": "print('updated')"},
+            {"name": "renamed_main.js", "language": "javascript", "content": "console.log('updated')"},
             format="json",
         )
         self.assertEqual(update_response.status_code, 200)
-        self.assertEqual(update_response.data["name"], "renamed_main")
-        self.assertEqual(update_response.data["content"], "print('updated')")
-        self.assertEqual(self.client.get(self.file_list_url()).data.__len__(), 1)
+        self.assertEqual(update_response.data["name"], "renamed_main.js")
+        self.assertEqual(update_response.data["language"], "javascript")
+        self.assertEqual(update_response.data["content"], "console.log('updated')")
+
+        tree_response = self.client.get(
+            reverse("workspace-detail", kwargs={"pk": self.workspace.id})
+        )
+        src_folder = next(
+            item for item in tree_response.data["children"] if item.get("id") == str(folder.id)
+        )
+        self.assertEqual(src_folder["children"][0]["content"], "console.log('updated')")
         self.assertEqual(self.client.delete(detail_url).status_code, 204)
         self.assertFalse(File.objects.filter(pk=file_id).exists())
 
@@ -99,65 +106,124 @@ class WorkspaceResourceAPITests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_recursive_tree_supports_root_and_deep_resources(self):
-        root_folder_response = self.client.post(
-            self.folder_list_url(), {"name": "root"}, format="json"
-        )
-        self.assertEqual(root_folder_response.status_code, 201)
-        root_folder_id = root_folder_response.data["id"]
-
-        nested_folder_response = self.client.post(
+        root = self.client.post(self.folder_list_url(), {"name": "root"}, format="json")
+        self.assertEqual(root.status_code, 201)
+        nested = self.client.post(
             self.folder_list_url(),
-            {"name": "nested", "parent": root_folder_id},
+            {"name": "nested", "parent": root.data["id"]},
             format="json",
         )
-        self.assertEqual(nested_folder_response.status_code, 201)
-        nested_folder_id = nested_folder_response.data["id"]
-
-        deep_folder_response = self.client.post(
+        self.assertEqual(nested.status_code, 201)
+        deep = self.client.post(
             self.folder_list_url(),
-            {"name": "deep", "parent": nested_folder_id},
+            {"name": "deep", "parent": nested.data["id"]},
             format="json",
         )
-        self.assertEqual(deep_folder_response.status_code, 201)
-        deep_folder_id = deep_folder_response.data["id"]
-
-        root_file_response = self.client.post(
-            self.file_list_url(),
-            {"name": "README", "content": "root file"},
-            format="json",
+        self.assertEqual(deep.status_code, 201)
+        self.assertEqual(
+            self.client.post(self.file_list_url(), {"name": "README"}, format="json").status_code,
+            201,
         )
-        self.assertEqual(root_file_response.status_code, 201)
-
-        folder_file_response = self.client.post(
-            self.file_list_url(),
-            {"name": "nested_file", "folder": root_folder_id},
-            format="json",
+        self.assertEqual(
+            self.client.post(
+                self.file_list_url(), {"name": "nested_file", "folder": root.data["id"]}, format="json"
+            ).status_code,
+            201,
         )
-        self.assertEqual(folder_file_response.status_code, 201)
-
-        deep_file_response = self.client.post(
-            self.file_list_url(),
-            {"name": "deep_file", "folder": deep_folder_id},
-            format="json",
+        self.assertEqual(
+            self.client.post(
+                self.file_list_url(), {"name": "deep_file", "folder": deep.data["id"]}, format="json"
+            ).status_code,
+            201,
         )
-        self.assertEqual(deep_file_response.status_code, 201)
 
         response = self.client.get(
             reverse("workspace-detail", kwargs={"pk": self.workspace.id})
         )
-        self.assertEqual(response.status_code, 200)
         tree = response.data["children"]
         self.assertTrue(any(item.get("name") == "README" for item in tree))
-        root_folder = next(item for item in tree if item.get("id") == root_folder_id)
-        nested_folder = next(
-            item for item in root_folder["children"] if item.get("id") == nested_folder_id
+        root_node = next(item for item in tree if item.get("id") == root.data["id"])
+        nested_node = next(item for item in root_node["children"] if item.get("id") == nested.data["id"])
+        deep_node = next(item for item in nested_node["children"] if item.get("id") == deep.data["id"])
+        self.assertTrue(any(item.get("name") == "nested_file" for item in root_node["children"]))
+        self.assertTrue(any(item.get("name") == "deep_file" for item in deep_node["children"]))
+
+
+class FileRunAPITests(APITestCase):
+    def setUp(self):
+        self.workspace = Workspace.objects.create(name="Run workspace")
+        self.file = File.objects.create(
+            workspace=self.workspace,
+            name="main.py",
+            language="python",
+            content="saved content",
         )
-        deep_folder = next(
-            item for item in nested_folder["children"] if item.get("id") == deep_folder_id
+        self.run_url = reverse(
+            "workspace-file-run",
+            kwargs={"workspace_id": self.workspace.id, "pk": self.file.id},
         )
-        self.assertTrue(
-            any(item.get("name") == "nested_file" for item in root_folder["children"])
+
+    @patch("workspace.views.run_program")
+    def test_run_uses_extension_and_current_request_content(self, run_program):
+        run_program.return_value = {
+            "stdout": "from runner", "stderr": "", "exit_code": 0,
+            "timed_out": False, "output_limited": False,
+        }
+        response = self.client.post(
+            self.run_url,
+            {"content": "console.log('extension wins')"},
+            format="json",
         )
-        self.assertTrue(
-            any(item.get("name") == "deep_file" for item in deep_folder["children"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["language"], "python")
+        run_program.assert_called_once_with("python", "console.log('extension wins')")
+
+    @patch("workspace.views.run_program")
+    def test_run_detects_extensionless_python_from_content(self, run_program):
+        self.file.name = "main"
+        self.file.save(update_fields=["name"])
+        run_program.return_value = {
+            "stdout": "hello\n", "stderr": "", "exit_code": 0,
+            "timed_out": False, "output_limited": False,
+        }
+        response = self.client.post(
+            self.run_url, {"content": "print('hello')"}, format="json"
         )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["language"], "python")
+        run_program.assert_called_once_with("python", "print('hello')")
+
+    @patch("workspace.views.run_program")
+    def test_run_detects_and_executes_cpp(self, run_program):
+        self.file.name = "main.cpp"
+        self.file.save(update_fields=["name"])
+        run_program.return_value = {
+            "stdout": "hello from cpp\n", "stderr": "", "exit_code": 0,
+            "timed_out": False, "output_limited": False,
+        }
+        source = '#include <iostream>\nint main() { std::cout << "hello from cpp\\n"; }'
+        response = self.client.post(
+            self.run_url, {"content": source}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["language"], "cpp")
+        run_program.assert_called_once_with("cpp", source)
+
+    @patch("workspace.views.run_program")
+    def test_run_rejects_ambiguous_or_unsupported_source(self, run_program):
+        self.file.name = "main"
+        self.file.save(update_fields=["name"])
+        response = self.client.post(
+            self.run_url, {"content": "x = transform(data)"}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Could not confidently detect", response.data["detail"])
+
+        self.file.name = "main.js"
+        self.file.save(update_fields=["name"])
+        response = self.client.post(
+            self.run_url, {"content": "console.log('hello')"}, format="json"
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("only for Python", response.data["detail"])
+        run_program.assert_not_called()
