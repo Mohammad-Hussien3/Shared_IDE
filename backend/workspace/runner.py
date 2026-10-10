@@ -25,12 +25,11 @@ class RunnerUnavailable(Exception):
     pass
 
 
-def run_program(language, source):
-    """Execute supported code in a disposable, networkless container."""
-    name = f"workspace-run-{uuid.uuid4().hex}"
+def build_runner_command(language, source, name, interactive=False):
+    """Build the fixed command and resource limits for one isolated program."""
     if language == "python":
         image = PYTHON_RUNNER_IMAGE
-        program = ["python", "-c", source]
+        program = ["python", "-u", "-c", source] if interactive else ["python", "-c", source]
         memory = "128m"
     elif language in {"c", "cpp"}:
         image = CPP_RUNNER_IMAGE
@@ -48,8 +47,6 @@ def run_program(language, source):
         memory = "256m"
     else:
         raise RunnerUnavailable(f"No isolated runner is configured for {language}.")
-
-    _ensure_image_available(image)
 
     command = [
         RUNNER_ENGINE,
@@ -74,9 +71,18 @@ def run_program(language, source):
         "--workdir=/tmp",
         "--env=HOME=/tmp",
         "--env=PYTHONDONTWRITEBYTECODE=1",
-        image,
-        *program,
     ]
+    if interactive:
+        command.extend(["--interactive", "--tty", "--detach-keys=", "--env=TERM=xterm-256color"])
+    command.extend([image, *program])
+    return command, image
+
+
+def run_program(language, source):
+    """Execute code in a disposable container and collect bounded output."""
+    name = f"workspace-run-{uuid.uuid4().hex}"
+    command, image = build_runner_command(language, source, name)
+    _ensure_image_available(image)
 
     try:
         process = subprocess.Popen(

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
+import TerminalPanel from "../components/TerminalPanel";
 import "../App.css";
 
 const API_URL = import.meta.env.VITE_API_URL;
 const DEFAULT_WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID;
 const API_BASE_URL = API_URL?.replace(/\/$/, "");
+const WS_BASE_URL = API_BASE_URL?.replace(/^http(s?):/, "ws$1:");
 const LANGUAGE_EXTENSIONS = {
   python: ".py",
   javascript: ".js",
@@ -259,9 +261,10 @@ export default function WorkspacePage() {
   const [renameSaving, setRenameSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [runStage, setRunStage] = useState("");
-  const [showOutput, setShowOutput] = useState(false);
-  const [runResult, setRunResult] = useState(null);
-  const [runError, setRunError] = useState("");
+  const terminalRef = useRef(null);
+  const activeSocketRef = useRef(null);
+  const pendingInputRef = useRef("");
+  const terminalReadyRef = useRef(false);
   const fileRequestId = useRef(0);
   const runInProgressRef = useRef(false);
   const saveInProgressRef = useRef(false);
@@ -272,6 +275,7 @@ export default function WorkspacePage() {
   useEffect(() => {
     activeFileRef.current = activeFile;
   }, [activeFile]);
+  useEffect(() => () => activeSocketRef.current?.close(), []);
   const files = useMemo(() => flattenFiles(tree), [tree]);
 
   useEffect(() => {
@@ -472,7 +476,7 @@ export default function WorkspacePage() {
         },
       ));
       await refreshWorkspaceTree();
-    setActiveFile((current) => current?.id === file.id ? { ...current, ...updated, type: "file" } : current);
+      setActiveFile((current) => current?.id === file.id ? { ...current, ...updated, type: "file" } : current);
       setRenamingFileId(null);
       setRenameValue("");
       setActionMessage("File renamed");
@@ -484,21 +488,100 @@ export default function WorkspacePage() {
     }
   };
 
+  const writeTerminal = (message) => terminalRef.current?.write(message);
+
+  const stopRun = () => {
+    const socket = activeSocketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "stop" }));
+    } else if (socket?.readyState === WebSocket.CONNECTING) {
+      socket.close();
+    }
+  };
+
+  const sendTerminalInput = (data) => {
+    const socket = activeSocketRef.current;
+    if (!socket || !runInProgressRef.current) return;
+    if (socket.readyState === WebSocket.OPEN && terminalReadyRef.current) {
+      socket.send(JSON.stringify({ type: "input", data }));
+    } else if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+      pendingInputRef.current += data;
+    }
+  };
+
+  const sendTerminalResize = (cols, rows) => {
+    const socket = activeSocketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "resize", cols, rows }));
+    }
+  };
+
+  const executeSavedFile = (fileId) => new Promise((resolve, reject) => {
+    const socket = new WebSocket(`${WS_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/run/`);
+    activeSocketRef.current = socket;
+    terminalReadyRef.current = false;
+    pendingInputRef.current = "";
+    let finished = false;
+
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "start" }));
+      const { cols, rows } = terminalRef.current?.getDimensions() || { cols: 80, rows: 24 };
+      socket.send(JSON.stringify({ type: "resize", cols, rows }));
+    };
+    socket.onmessage = (event) => {
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (message.type === "ready") {
+        terminalReadyRef.current = true;
+        terminalRef.current?.focus();
+        if (pendingInputRef.current) {
+          socket.send(JSON.stringify({ type: "input", data: pendingInputRef.current }));
+          pendingInputRef.current = "";
+        }
+      } else if (message.type === "output") {
+        writeTerminal(message.data || "");
+      } else if (message.type === "error") {
+        writeTerminal(`\r\n\x1b[31m${message.message || "Execution failed."}\x1b[0m\r\n`);
+      } else if (message.type === "finished") {
+        finished = true;
+        terminalReadyRef.current = false;
+        if (message.reason === "stopped") writeTerminal("\r\n[Stopped]\r\n");
+        else if (message.reason === "timeout") writeTerminal("\r\n[Timed out]\r\n");
+        else if (message.reason === "completed") writeTerminal(`\r\n[Exited with code ${message.exit_code}]\r\n`);
+        socket.close();
+        resolve();
+      }
+    };
+    socket.onerror = () => {
+      if (!finished) writeTerminal("\r\n\x1b[31mTerminal connection failed.\x1b[0m\r\n");
+    };
+    socket.onclose = () => {
+      if (activeSocketRef.current === socket) {
+        activeSocketRef.current = null;
+        terminalReadyRef.current = false;
+        pendingInputRef.current = "";
+      }
+      if (!finished) reject(new Error("Terminal connection closed before execution finished."));
+    };
+  });
+
   const runFile = async () => {
     if (runInProgressRef.current) return;
-    setShowOutput(true);
-    setRunResult(null);
-    setRunError("");
+    terminalRef.current?.clear();
     if (!activeFile) {
-      setRunError("Select a file before running code.");
+      writeTerminal("Select a file before running code.\r\n");
       return;
     }
     if (loadingFile) {
-      setRunError("Wait for the selected file to finish loading before running it.");
+      writeTerminal("Wait for the selected file to finish loading before running it.\r\n");
       return;
     }
     if (saveInProgressRef.current) {
-      setRunError("Wait for the current save to finish before running the file.");
+      writeTerminal("Wait for the current save to finish before running the file.\r\n");
       return;
     }
 
@@ -510,6 +593,7 @@ export default function WorkspacePage() {
     runInProgressRef.current = true;
     setRunning(true);
     setRunStage("saving");
+    writeTerminal("Saving the latest editor content…\r\n");
     try {
       const filenameHasExtension = hasFilenameExtension(activeFile.name);
       let language;
@@ -564,22 +648,15 @@ export default function WorkspacePage() {
       setTree((current) => replaceFileInTree(current, activeFile.id, runFileRecord));
 
       setRunStage("running");
-      const result = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/files/${runFileRecord.id}/run/`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: savedFile.content ?? contentToRun }),
-        },
-      ));
-      setRunResult(result);
+      writeTerminal("Running in an isolated container…\r\n");
+      await executeSavedFile(runFileRecord.id);
     } catch (err) {
       if (saveAttempted && !saveConfirmed && activeFileRef.current?.id === fileId) {
         dirtyFilesRef.current.add(fileId);
         setSaveStatus("Unsaved");
         setSaveError(`Save failed: ${err.message}`);
       }
-      setRunError(err.message || "Code execution failed.");
+      writeTerminal(`\r\n\x1b[31m${err.message || "Code execution failed."}\x1b[0m\r\n`);
     } finally {
       runInProgressRef.current = false;
       setRunStage("");
@@ -630,22 +707,7 @@ export default function WorkspacePage() {
               setSaveError("");
             }} options={{ fontSize: 14, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace", minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 16 }, lineNumbersMinChars: 3, renderLineHighlight: "line", overviewRulerBorder: false }} />) : <div className="welcome-state"><div className="welcome-glyph">{loading ? "◌" : "⌘"}</div><p>{loading ? "Opening your workspace…" : "Select a file to view its content"}</p><span>{error || (files.length ? "Choose a file from the Explorer" : "Your workspace is empty")}</span></div>}
           </div>
-          {showOutput && <section className="output-panel" aria-live="polite">
-            <div className="output-heading"><span>Run Output</span><button onClick={() => setShowOutput(false)} aria-label="Close output panel">×</button></div>
-            <div className="output-body">
-              {runStage === "saving" && <div className="output-placeholder">Saving the latest editor content before execution…</div>}
-              {runStage === "running" && <div className="output-placeholder">Running in an isolated container…</div>}
-              {runError && <pre className="output-error">{runError}</pre>}
-              {runResult && <>
-                <div className={`run-summary ${runResult.exit_code === 0 && !runResult.timed_out ? "" : "output-error"}`}>
-                  {runResult.language} · {runResult.timed_out ? "Timed out" : `exit code ${runResult.exit_code}`}{runResult.output_limited ? " · output limit reached" : ""}
-                </div>
-                {runResult.stdout && <pre>{runResult.stdout}</pre>}
-                {runResult.stderr && <pre className="output-error">{runResult.stderr}</pre>}
-                {!runResult.stdout && !runResult.stderr && !runResult.timed_out && <div className="output-placeholder">Program completed without output.</div>}
-              </>}
-            </div>
-          </section>}
+          <TerminalPanel ref={terminalRef} onInput={sendTerminalInput} onResize={sendTerminalResize} onStop={stopRun} running={running && runStage === "running"} />
         </section>
       </div>
       <footer className="statusbar"><div className="status-left"><span>{workspace?.name || "Workspace"}</span></div><div className="status-right"><span>{activeFile ? languageFor(activeFile) : "Ready"}</span><span>UTF-8</span></div></footer>
