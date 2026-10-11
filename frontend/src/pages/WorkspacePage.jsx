@@ -1,244 +1,82 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import TerminalPanel from "../components/TerminalPanel";
+import {
+  AlertCircle,
+  ArrowRight,
+  Check,
+  ChevronRight,
+  Code2,
+  Files,
+  FilePlus2,
+  FolderOpen,
+  LoaderCircle,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Play,
+  Save,
+  Search,
+  Settings2,
+  Sun,
+  X,
+} from "lucide-react";
+import Explorer, { SearchSidebar } from "../components/Explorer";
+import EditorTabs from "../components/EditorTabs";
+import SettingsPanel from "../components/SettingsPanel";
+import {
+  FileIcon,
+  IconButton,
+  ResizeHandle,
+  ResourceDialog,
+  SaveIndicator,
+} from "../components/IdePrimitives";
+import {
+  LANGUAGE_EXTENSIONS,
+  hasFilenameExtension,
+  languageFromFilename,
+  detectLanguageFromContent,
+  normalizeFilename,
+  getFileName,
+  flattenFiles,
+  findFileById,
+  findFolderName,
+  findFolderPath,
+  replaceFileInTree,
+  languageFor,
+} from "../lib/ideFiles";
 import "../App.css";
+
+const Editor = lazy(() => import("../components/CodeEditor"));
 
 const API_URL = import.meta.env.VITE_API_URL;
 const DEFAULT_WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID;
 const API_BASE_URL = API_URL?.replace(/\/$/, "");
 const WS_BASE_URL = API_BASE_URL?.replace(/^http(s?):/, "ws$1:");
-const LANGUAGE_EXTENSIONS = {
-  python: ".py",
-  javascript: ".js",
-  typescript: ".ts",
-  java: ".java",
-  cpp: ".cpp",
-  "c++": ".cpp",
-  c: ".c",
-  csharp: ".cs",
-  "c#": ".cs",
-  go: ".go",
-  rust: ".rs",
-  php: ".php",
-  ruby: ".rb",
-  kotlin: ".kt",
-  swift: ".swift",
-  html: ".html",
-  css: ".css",
-  json: ".json",
-  xml: ".xml",
-  sql: ".sql",
-  bash: ".sh",
-  shell: ".sh",
-};
-const EXTENSION_LANGUAGES = {
-  py: "python", js: "javascript", ts: "typescript", java: "java", cpp: "cpp",
-  c: "c", cs: "csharp", go: "go", rs: "rust", php: "php", rb: "ruby",
-  kt: "kotlin", swift: "swift", html: "html", css: "css", json: "json",
-  xml: "xml", sql: "sql", sh: "bash",
-};
-const LANGUAGE_ALIASES = { "c++": "cpp", "c#": "csharp", shell: "bash" };
-
-function hasFilenameExtension(name) {
-  return /\.[^./\\]+$/.test(name) && name.lastIndexOf(".") > 0;
-}
-
-function languageFromFilename(name) {
-  if (!hasFilenameExtension(name)) return "";
-  const extension = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
-  return EXTENSION_LANGUAGES[extension] || "";
-}
-
-function detectLanguageFromContent(source) {
-  const signatures = {
-    python: [
-      /^\s*(?:async\s+)?def\s+\w+\s*\(/m,
-      /^\s*(?:from\s+[\w.]+\s+import|import\s+[\w.]+)/m,
-      /\b(?:None|True|False|lambda|self)\b/,
-      /\bprint\s*\(/,
-    ],
-    c: [
-      /^\s*#\s*include\s*[<"](?:stdio|stdlib|string|stdbool|stdint)\.h[>"]/m,
-      /\b(?:printf|scanf|puts|fopen|malloc|free)\s*\(/,
-    ],
-    cpp: [
-      /^\s*#\s*include\s*[<"](?:iostream|bits\/stdc\+\+\.h)[>"]/m,
-      /\bstd::(?:cout|cin|cerr)\b/,
-      /\b(?:cout|cin)\s*<</,
-    ],
-  };
-  const candidates = Object.entries(signatures)
-    .filter(([, markers]) => markers.some((marker) => marker.test(source)))
-    .map(([language]) => language);
-  return candidates.length === 1 ? candidates[0] : "";
-}
-
-function replaceFileInTree(nodes, fileId, updatedFile) {
-  return nodes.map((node) => {
-    if (node.type === "file" && String(node.id) === String(fileId)) {
-      return { ...node, ...updatedFile, type: "file" };
-    }
-    if (node.type === "folder") {
-      return { ...node, children: replaceFileInTree(node.children || [], fileId, updatedFile) };
-    }
-    return node;
-  });
-}
-
-function askForLanguage() {
-  const answer = window.prompt(
-    "I couldn't confidently detect the language. Type python, c, or cpp to choose one.",
-  );
-  const normalized = answer?.trim().toLowerCase();
-  const language = normalized === "c++" ? "cpp" : normalized;
-  return ["python", "c", "cpp"].includes(language) ? language : "";
-}
-
-function normalizeFilename(name, language) {
-  const extension = LANGUAGE_EXTENSIONS[LANGUAGE_ALIASES[language] || language];
-  if (!extension) return name;
-  let normalized = name;
-  while (normalized.toLowerCase().endsWith(extension + extension)) {
-    normalized = normalized.slice(0, -extension.length);
-  }
-  return normalized;
-}
-
-export function getFileName(file) {
-  const name = file?.name || "";
-  if (hasFilenameExtension(name)) return name;
-  const storedLanguage = file?.language?.trim().toLowerCase();
-  const language = LANGUAGE_ALIASES[storedLanguage] || storedLanguage;
-  const extension = LANGUAGE_EXTENSIONS[language];
-  if (!extension) return name;
-  return `${name}${extension}`;
-}
-
-function flattenFiles(nodes = [], parent = "") {
-  return nodes.flatMap((node) => {
-    const path = parent ? `${parent}/${node.name}` : node.name;
-    return node.type === "file"
-      ? [{ ...node, path }]
-      : flattenFiles(node.children || [], path);
-  });
-}
-
-function findFileById(nodes = [], fileId) {
-  for (const node of nodes) {
-    if (node.type === "file" && String(node.id) === String(fileId)) return node;
-    const nestedMatch = findFileById(node.children || [], fileId);
-    if (nestedMatch) return nestedMatch;
-  }
-  return null;
-}
-
-function findFolderName(nodes = [], folderId) {
-  for (const node of nodes) {
-    if (node.type === "folder" && node.id === folderId) return node.name;
-    const nestedName = findFolderName(node.children || [], folderId);
-    if (nestedName) return nestedName;
-  }
-  return "selected folder";
-}
-
-function findFolderPath(nodes = [], folderId, ancestors = []) {
-  for (const node of nodes) {
-    if (node.type !== "folder") continue;
-    const path = [...ancestors, node.id];
-    if (String(node.id) === String(folderId)) return path;
-    const nestedPath = findFolderPath(node.children || [], folderId, path);
-    if (nestedPath.length) return nestedPath;
-  }
-  return [];
-}
-
 async function responseData(response) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const message = data.detail || Object.values(data).flat().join(" ") || response.statusText;
+    const message =
+      data.detail ||
+      Object.values(data).flat().join(" ") ||
+      response.statusText;
     throw new Error(`HTTP ${response.status}${message ? `: ${message}` : ""}`);
   }
   return data;
 }
 
-function TreeItem({
-  node, depth = 0, selectedId, selectedFolderId, onSelect, onSelectFolder,
-  expanded, onToggle, renamingFileId, renameValue, setRenameValue,
-  renameError, renameSaving, onStartRename, onSaveRename, onCancelRename,
-}) {
-  const isFolder = node.type === "folder";
-  const isOpen = expanded.has(node.id);
-  const isRenaming = !isFolder && renamingFileId === node.id;
-  const fileRow = (
-    <button
-      className={`tree-row ${selectedId === node.id ? "selected" : ""}`}
-      style={{ "--depth": depth }}
-      onClick={() => onSelect(node)}
-      title={getFileName(node)}
-    >
-      <span className="tree-chevron" />
-      <span className="tree-icon file-icon">◦</span>
-      <span className="tree-name">{getFileName(node)}</span>
-    </button>
-  );
-  return (
-    <>
-      {isFolder ? (
-        <button
-          className={`tree-row ${selectedFolderId === node.id ? "selected" : ""}`}
-          style={{ "--depth": depth }}
-          onClick={() => { onSelectFolder(node); onToggle(node.id); }}
-          title={node.name}
-        >
-          <span className={`tree-chevron ${isOpen ? "open" : ""}`}>{isOpen ? "▾" : "›"}</span>
-          <span className="tree-icon folder-icon">{isOpen ? "▾" : "▸"}</span>
-          <span className="tree-name">{node.name}</span>
-        </button>
-      ) : isRenaming ? (
-        <div className="rename-form" style={{ "--depth": depth }}>
-          <input
-            aria-label={`Rename ${getFileName(node)}`}
-            autoFocus
-            value={renameValue}
-            onChange={(event) => setRenameValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") onSaveRename(node);
-              if (event.key === "Escape") onCancelRename();
-            }}
-          />
-          <button title="Save rename" onClick={() => onSaveRename(node)} disabled={renameSaving || !renameValue.trim()}>Save</button>
-          <button title="Cancel rename" onClick={onCancelRename} disabled={renameSaving}>Cancel</button>
-          {renameError && <span className="rename-error">{renameError}</span>}
-        </div>
-      ) : (
-        <div className="tree-file-row">
-          {fileRow}
-          <button className="rename-action" title={`Rename ${getFileName(node)}`} onClick={() => onStartRename(node)}>Rename</button>
-        </div>
-      )}
-      {isFolder && isOpen && (node.children || []).map((child) => (
-        <TreeItem
-          key={child.id} node={child} depth={depth + 1} selectedId={selectedId}
-          selectedFolderId={selectedFolderId} onSelect={onSelect} onSelectFolder={onSelectFolder}
-          expanded={expanded} onToggle={onToggle} renamingFileId={renamingFileId}
-          renameValue={renameValue} setRenameValue={setRenameValue} renameError={renameError}
-          renameSaving={renameSaving} onStartRename={onStartRename} onSaveRename={onSaveRename}
-          onCancelRename={onCancelRename}
-        />
-      ))}
-    </>
-  );
-}
-
-function languageFor(file) {
-  const filenameLanguage = languageFromFilename(file?.name || "");
-  const storedLanguage = file?.language?.trim().toLowerCase();
-  return filenameLanguage || LANGUAGE_ALIASES[storedLanguage] || storedLanguage || "plaintext";
-}
-
 export default function WorkspacePage() {
   const [workspace, setWorkspace] = useState(null);
-  const [workspaceId] = useState(() => DEFAULT_WORKSPACE_ID || localStorage.getItem("workspace_id") || "");
+  const [workspaceId] = useState(
+    () => DEFAULT_WORKSPACE_ID || localStorage.getItem("workspace_id") || "",
+  );
   const [tree, setTree] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
   const [selectedFolderId, setSelectedFolderId] = useState(null);
@@ -247,18 +85,40 @@ export default function WorkspacePage() {
   const [loadingFile, setLoadingFile] = useState(false);
   const [fileError, setFileError] = useState("");
   const [expanded, setExpanded] = useState(new Set());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(Boolean(workspaceId && API_URL));
+  const [error, setError] = useState(() =>
+    !workspaceId
+      ? "No workspace found. Create or select a workspace to get started."
+      : !API_URL
+        ? "VITE_API_URL is not configured."
+        : "",
+  );
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
   const [manualSaving, setManualSaving] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [renamingFileId, setRenamingFileId] = useState(null);
-  const [renameValue, setRenameValue] = useState("");
-  const [renameError, setRenameError] = useState("");
-  const [renameSaving, setRenameSaving] = useState(false);
+  const [dialog, setDialog] = useState(null);
+  const [openFileIds, setOpenFileIds] = useState([]);
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem("ide-theme") || "dark",
+  );
+  const [fontSize, setFontSize] = useState(
+    () => Number(localStorage.getItem("ide-font-size")) || 14,
+  );
+  const [wordWrap, setWordWrap] = useState(
+    () => localStorage.getItem("ide-word-wrap") === "true",
+  );
+  const [sidebarView, setSidebarView] = useState("explorer");
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 760);
+  const [sidebarWidth, setSidebarWidth] = useState(258);
+  const [panelMaximized, setPanelMaximized] = useState(false);
+  const [cursor, setCursor] = useState({ line: 1, column: 1 });
+  const [diagnostics, setDiagnostics] = useState({});
+  const [executionProblems, setExecutionProblems] = useState([]);
+  const editorRef = useRef(null);
+  const cursorSubscriptionRef = useRef(null);
   const [running, setRunning] = useState(false);
   const [runStage, setRunStage] = useState("");
   const terminalRef = useRef(null);
@@ -271,24 +131,76 @@ export default function WorkspacePage() {
   const activeFileRef = useRef(activeFile);
   const contentRevisionsRef = useRef(new Map());
   const dirtyFilesRef = useRef(new Set());
+  const [dirtyIds, setDirtyIds] = useState(new Set());
+  const markDirty = (id, dirty) => {
+    if (dirty) dirtyFilesRef.current.add(id);
+    else dirtyFilesRef.current.delete(id);
+    setDirtyIds(new Set(dirtyFilesRef.current));
+  };
 
   useEffect(() => {
     activeFileRef.current = activeFile;
   }, [activeFile]);
   useEffect(() => () => activeSocketRef.current?.close(), []);
   const files = useMemo(() => flattenFiles(tree), [tree]);
+  const openedFiles = openFileIds
+    .map(
+      (id) =>
+        findFileById(tree, id) || (activeFile?.id === id ? activeFile : null),
+    )
+    .filter(Boolean);
+  const problems = [...Object.values(diagnostics).flat(), ...executionProblems];
+  const activePath =
+    files.find((file) => file.id === activeFile?.id)?.path ||
+    activeFile?.name ||
+    "";
 
   useEffect(() => {
-    if (!workspaceId) {
-      setError("No workspace found. Create or select a workspace to get started.");
-      setLoading(false);
-      return;
-    }
-    if (!API_URL) {
-      setError("VITE_API_URL is not configured.");
-      setLoading(false);
-      return;
-    }
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("ide-theme", theme);
+  }, [theme]);
+  useEffect(() => {
+    localStorage.setItem("ide-font-size", String(fontSize));
+  }, [fontSize]);
+  useEffect(() => {
+    localStorage.setItem("ide-word-wrap", String(wordWrap));
+  }, [wordWrap]);
+  useEffect(() => () => cursorSubscriptionRef.current?.dispose(), []);
+  useEffect(() => {
+    if (!actionMessage || actionError) return;
+    const timer = setTimeout(() => setActionMessage(""), 4500);
+    return () => clearTimeout(timer);
+  }, [actionMessage, actionError]);
+
+  const closeDialog = () => {
+    dialog?.onCancel?.();
+    setDialog(null);
+  };
+  const chooseLanguage = () =>
+    new Promise((resolve) =>
+      setDialog({
+        title: "Choose a language",
+        description:
+          "The code is ambiguous. Choose the language to assign an extension and run this file.",
+        label: "Language",
+        value: "python",
+        submitLabel: "Continue",
+        options: [
+          { value: "python", label: "Python" },
+          { value: "c", label: "C" },
+          { value: "cpp", label: "C++" },
+        ],
+        onSubmit: (value) => resolve(value),
+        onCancel: () => resolve(""),
+      }),
+    );
+  const openSidebar = (view) => {
+    setSidebarView(view);
+    setSidebarOpen(true);
+  };
+
+  useEffect(() => {
+    if (!workspaceId || !API_URL) return;
     let cancelled = false;
     fetch(`${API_BASE_URL}/workspaces/${workspaceId}/`)
       .then(responseData)
@@ -296,90 +208,130 @@ export default function WorkspacePage() {
         if (cancelled) return;
         setWorkspace(data);
         setTree(data.children || []);
-        setExpanded(new Set((data.children || []).filter((item) => item.type === "folder").map((item) => item.id)));
+        setExpanded(
+          new Set(
+            (data.children || [])
+              .filter((item) => item.type === "folder")
+              .map((item) => item.id),
+          ),
+        );
         setError("");
       })
-      .catch((err) => !cancelled && setError(err.message || "Could not load workspace."))
+      .catch(
+        (err) =>
+          !cancelled && setError(err.message || "Could not load workspace."),
+      )
       .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [workspaceId]);
 
-  const selectFile = useCallback(async (file) => {
-    setActiveFile(file);
-    setFileError("");
-    setSaveStatus(dirtyFilesRef.current.has(file.id) ? "Unsaved" : "Saved");
-    setSaveError("");
-    const requestId = ++fileRequestId.current;
-    if (Object.hasOwn(contentsByFile, file.id)) {
-      setFileContent(contentsByFile[file.id]);
-      setLoadingFile(false);
-      return;
-    }
-    setFileContent("");
-    setLoadingFile(true);
-
-    try {
-      // The API has no file-detail route. Its workspace-detail response includes each file's content.
-      const response = await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/`);
-      const workspaceData = await responseData(response);
-      const fetchedFile = findFileById(workspaceData.children || [], file.id);
-      if (!fetchedFile) throw new Error("File was not found in the workspace response.");
-      if (requestId === fileRequestId.current) {
-        const content = fetchedFile.content ?? "";
-        setFileContent(content);
-        setContentsByFile((current) => ({ ...current, [file.id]: content }));
+  const selectFile = useCallback(
+    async (file) => {
+      setActiveFile(file);
+      activeFileRef.current = file;
+      setOpenFileIds((current) =>
+        current.includes(file.id) ? current : [...current, file.id],
+      );
+      if (window.innerWidth <= 760) setSidebarOpen(false);
+      setFileError("");
+      setSaveStatus(dirtyFilesRef.current.has(file.id) ? "Unsaved" : "Saved");
+      setSaveError("");
+      const requestId = ++fileRequestId.current;
+      if (Object.hasOwn(contentsByFile, file.id)) {
+        setFileContent(contentsByFile[file.id]);
+        setLoadingFile(false);
+        return;
       }
-    } catch (err) {
-      if (requestId === fileRequestId.current) setFileError(err.message || "Could not load file content.");
-    } finally {
-      if (requestId === fileRequestId.current) setLoadingFile(false);
-    }
-  }, [workspaceId, contentsByFile]);
+      setFileContent("");
+      setLoadingFile(true);
 
-  const toggleFolder = (id) => setExpanded((current) => {
-    const next = new Set(current);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    return next;
-  });
+      try {
+        const fetchedFile = await responseData(
+          await fetch(
+            `${API_BASE_URL}/workspaces/${workspaceId}/files/${file.id}/`,
+          ),
+        );
+        if (requestId === fileRequestId.current) {
+          const content = fetchedFile.content ?? "";
+          setFileContent(content);
+          setContentsByFile((current) => ({ ...current, [file.id]: content }));
+        }
+      } catch (err) {
+        if (requestId === fileRequestId.current)
+          setFileError(err.message || "Could not load file content.");
+      } finally {
+        if (requestId === fileRequestId.current) setLoadingFile(false);
+      }
+    },
+    [workspaceId, contentsByFile],
+  );
 
-  const refreshWorkspaceTree = useCallback(async (folderIdsToExpand = []) => {
-    const data = await responseData(
-      await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/`),
-    );
-    setWorkspace(data);
-    setTree(data.children || []);
-    if (folderIdsToExpand.length) {
-      setExpanded((current) => new Set([...current, ...folderIdsToExpand]));
-    }
-    return data;
-  }, [workspaceId]);
+  const toggleFolder = (id) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
-  const createItem = async (type) => {
-    const folderName = selectedFolderId
-      ? `inside ${findFolderName(tree, selectedFolderId)}`
-      : "at workspace root";
-    const name = window.prompt(`New ${type} name (${folderName})`);
-    if (!name?.trim()) return;
+  const refreshWorkspaceTree = useCallback(
+    async (folderIdsToExpand = []) => {
+      const data = await responseData(
+        await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/`),
+      );
+      setWorkspace(data);
+      setTree(data.children || []);
+      if (folderIdsToExpand.length) {
+        setExpanded((current) => new Set([...current, ...folderIdsToExpand]));
+      }
+      return data;
+    },
+    [workspaceId],
+  );
 
+  const createItem = (type, folderId = selectedFolderId) =>
+    setDialog({
+      title: `New ${type}`,
+      description: folderId
+        ? `Create inside ${findFolderName(tree, folderId)}.`
+        : "Create at the workspace root.",
+      label: type === "file" ? "Filename" : "Folder name",
+      placeholder: type === "file" ? "main.py" : "src",
+      submitLabel: "Create",
+      onSubmit: (name) => submitCreate(type, folderId, name),
+    });
+
+  const submitCreate = async (type, folderId, name) => {
     setCreating(true);
     setActionMessage("");
     setActionError(false);
     try {
       const isFolder = type === "folder";
       const endpoint = isFolder ? "folders" : "files";
-      const cleanName = normalizeFilename(name.trim(), languageFromFilename(name.trim()));
+      const cleanName = isFolder
+        ? name.trim()
+        : normalizeFilename(name.trim(), languageFromFilename(name.trim()));
       const payload = isFolder
-        ? { name: cleanName, ...(selectedFolderId ? { parent: selectedFolderId } : {}) }
-        : { name: cleanName, language: languageFromFilename(cleanName), content: "", ...(selectedFolderId ? { folder: selectedFolderId } : {}) };
-      const created = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/${endpoint}/`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
-      ));
-      const visibleFolderPath = findFolderPath(tree, selectedFolderId);
-      await refreshWorkspaceTree(isFolder
-        ? [...visibleFolderPath, created.id]
-        : visibleFolderPath);
+        ? { name: cleanName, ...(folderId ? { parent: folderId } : {}) }
+        : {
+            name: cleanName,
+            language: languageFromFilename(cleanName),
+            content: "",
+            ...(folderId ? { folder: folderId } : {}),
+          };
+      const created = await responseData(
+        await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/${endpoint}/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }),
+      );
+      const visibleFolderPath = findFolderPath(tree, folderId);
+      await refreshWorkspaceTree(
+        isFolder ? [...visibleFolderPath, created.id] : visibleFolderPath,
+      );
 
       if (isFolder) {
         setSelectedFolderId(created.id);
@@ -388,25 +340,40 @@ export default function WorkspacePage() {
         fileRequestId.current += 1;
         const file = { ...created, type: "file" };
         setActiveFile(file);
+        activeFileRef.current = file;
+        setOpenFileIds((current) => [...current, file.id]);
+        setLoadingFile(false);
         setFileContent(created.content ?? "");
-        setContentsByFile((current) => ({ ...current, [created.id]: created.content ?? "" }));
+        setContentsByFile((current) => ({
+          ...current,
+          [created.id]: created.content ?? "",
+        }));
         setFileError("");
         setSaveStatus("Saved");
         setSaveError("");
         contentRevisionsRef.current.set(file.id, 0);
-        dirtyFilesRef.current.delete(file.id);
+        markDirty(file.id, false);
         setActionMessage("File created");
       }
     } catch (err) {
       setActionMessage(err.message || `Could not create ${type}.`);
       setActionError(true);
+      throw err;
     } finally {
       setCreating(false);
     }
   };
 
   const saveFile = async () => {
-    if (!activeFile || !workspaceId || saveInProgressRef.current || runInProgressRef.current) return;
+    if (
+      !activeFile ||
+      loadingFile ||
+      fileError ||
+      !workspaceId ||
+      saveInProgressRef.current ||
+      runInProgressRef.current
+    )
+      return;
     const fileId = activeFile.id;
     const contentToSave = fileContent;
     const revisionAtSave = contentRevisionsRef.current.get(fileId) || 0;
@@ -415,25 +382,35 @@ export default function WorkspacePage() {
     setSaveStatus("Saving…");
     setSaveError("");
     try {
-      const updated = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
-        { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content: contentToSave }) },
-      ));
+      const updated = await responseData(
+        await fetch(
+          `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: contentToSave }),
+          },
+        ),
+      );
       const revisionAfterSave = contentRevisionsRef.current.get(fileId) || 0;
       if (revisionAfterSave === revisionAtSave) {
         const savedContent = updated.content ?? contentToSave;
-        dirtyFilesRef.current.delete(fileId);
-        setContentsByFile((current) => ({ ...current, [fileId]: savedContent }));
+        markDirty(fileId, false);
+        setContentsByFile((current) => ({
+          ...current,
+          [fileId]: savedContent,
+        }));
         if (activeFileRef.current?.id === fileId) setFileContent(savedContent);
       }
       if (activeFileRef.current?.id === fileId) {
-        const stillDirty = (contentRevisionsRef.current.get(fileId) || 0) !== revisionAtSave;
+        const stillDirty =
+          (contentRevisionsRef.current.get(fileId) || 0) !== revisionAtSave;
         setSaveStatus(stillDirty ? "Unsaved" : "Saved");
         setSaveError("");
       }
     } catch (err) {
       if (activeFileRef.current?.id === fileId) {
-        dirtyFilesRef.current.add(fileId);
+        markDirty(fileId, true);
         setSaveStatus("Unsaved");
         setSaveError(`Save failed: ${err.message}`);
       }
@@ -443,50 +420,123 @@ export default function WorkspacePage() {
     }
   };
 
-  const startRename = (file) => {
-    setRenamingFileId(file.id);
-    setRenameValue(getFileName(file));
-    setRenameError("");
-  };
+  const renameItem = (node) =>
+    setDialog({
+      title: `Rename ${node.type}`,
+      description:
+        node.type === "folder"
+          ? "Give this folder a new name."
+          : "The extension determines the programming language.",
+      label: "Name",
+      value: node.type === "folder" ? node.name : getFileName(node),
+      submitLabel: "Rename",
+      onSubmit: async (inputName) => {
+        const isFolder = node.type === "folder";
+        const language = languageFromFilename(inputName);
+        const name = isFolder
+          ? inputName
+          : normalizeFilename(inputName, language);
+        const updated = await responseData(
+          await fetch(
+            `${API_BASE_URL}/workspaces/${workspaceId}/${isFolder ? "folders" : "files"}/${node.id}/`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(isFolder ? { name } : { name, language }),
+            },
+          ),
+        );
+        if (!isFolder)
+          setActiveFile((current) =>
+            current?.id === node.id
+              ? { ...current, ...updated, type: "file" }
+              : current,
+          );
+        await refreshWorkspaceTree();
+        setActionMessage(`${isFolder ? "Folder" : "File"} renamed`);
+        setActionError(false);
+      },
+    });
 
-  const cancelRename = () => {
-    setRenamingFileId(null);
-    setRenameValue("");
-    setRenameError("");
-  };
-
-  const saveRename = async (file) => {
-    const inputName = renameValue.trim();
-    if (!inputName) {
-      setRenameError("Filename cannot be empty.");
-      return;
-    }
-    const recognizedLanguage = languageFromFilename(inputName);
-    const newName = normalizeFilename(inputName, recognizedLanguage);
-    const language = recognizedLanguage || "";
-    setRenameSaving(true);
-    setRenameError("");
-    try {
-      const updated = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/files/${file.id}/`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: newName, language }),
-        },
-      ));
-      await refreshWorkspaceTree();
-      setActiveFile((current) => current?.id === file.id ? { ...current, ...updated, type: "file" } : current);
-      setRenamingFileId(null);
-      setRenameValue("");
-      setActionMessage("File renamed");
-      setActionError(false);
-    } catch (err) {
-      setRenameError(err.message || "Could not rename file.");
-    } finally {
-      setRenameSaving(false);
+  const discardTab = (file) => {
+    const remaining = openFileIds.filter((id) => id !== file.id);
+    setOpenFileIds(remaining);
+    markDirty(file.id, false);
+    setContentsByFile((current) => {
+      const next = { ...current };
+      delete next[file.id];
+      return next;
+    });
+    if (activeFileRef.current?.id === file.id) {
+      const next = findFileById(tree, remaining.at(-1));
+      if (next) selectFile(next);
+      else {
+        fileRequestId.current += 1;
+        activeFileRef.current = null;
+        setActiveFile(null);
+        setFileContent("");
+        setSaveStatus("");
+        setSaveError("");
+      }
     }
   };
+  const closeTab = (file) => {
+    if (dirtyFilesRef.current.has(file.id))
+      setDialog({
+        title: "Discard unsaved changes?",
+        description: `${getFileName(file)} has changes that haven't been saved.`,
+        confirmOnly: true,
+        danger: true,
+        submitLabel: "Discard & close",
+        onSubmit: () => discardTab(file),
+      });
+    else discardTab(file);
+  };
+  const deleteItem = (node) =>
+    setDialog({
+      title: `Delete ${node.type}?`,
+      description: `Delete “${node.name}”${node.type === "folder" ? " and everything inside it" : ""}? This cannot be undone.`,
+      confirmOnly: true,
+      danger: true,
+      submitLabel: "Delete",
+      onSubmit: async () => {
+        const response = await fetch(
+          `${API_BASE_URL}/workspaces/${workspaceId}/${node.type === "folder" ? "folders" : "files"}/${node.id}/`,
+          { method: "DELETE" },
+        );
+        if (!response.ok) await responseData(response);
+        const removed =
+          node.type === "file"
+            ? [node.id]
+            : flattenFiles(node.children).map((file) => file.id);
+        const remaining = openFileIds.filter((id) => !removed.includes(id));
+        setOpenFileIds(remaining);
+        removed.forEach((id) => markDirty(id, false));
+        setContentsByFile((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([id]) => !removed.includes(id)),
+          ),
+        );
+        setDiagnostics((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([id]) => !removed.includes(id)),
+          ),
+        );
+        setSelectedFolderId(null);
+        if (removed.includes(activeFileRef.current?.id)) {
+          fileRequestId.current += 1;
+          activeFileRef.current = null;
+          setActiveFile(null);
+          setSaveStatus("");
+          setFileContent("");
+        }
+        await refreshWorkspaceTree();
+        setActionMessage(
+          `${node.type === "folder" ? "Folder" : "File"} deleted`,
+        );
+        setActionError(false);
+      },
+    });
 
   const writeTerminal = (message) => terminalRef.current?.write(message);
 
@@ -504,7 +554,10 @@ export default function WorkspacePage() {
     if (!socket || !runInProgressRef.current) return;
     if (socket.readyState === WebSocket.OPEN && terminalReadyRef.current) {
       socket.send(JSON.stringify({ type: "input", data }));
-    } else if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) {
+    } else if (
+      socket.readyState === WebSocket.CONNECTING ||
+      socket.readyState === WebSocket.OPEN
+    ) {
       pendingInputRef.current += data;
     }
   };
@@ -516,72 +569,115 @@ export default function WorkspacePage() {
     }
   };
 
-  const executeSavedFile = (fileId) => new Promise((resolve, reject) => {
-    const socket = new WebSocket(`${WS_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/run/`);
-    activeSocketRef.current = socket;
-    terminalReadyRef.current = false;
-    pendingInputRef.current = "";
-    let finished = false;
+  const executeSavedFile = (fileId, filename) =>
+    new Promise((resolve, reject) => {
+      const socket = new WebSocket(
+        `${WS_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/run/`,
+      );
+      activeSocketRef.current = socket;
+      terminalReadyRef.current = false;
+      pendingInputRef.current = "";
+      let finished = false;
 
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "start" }));
-      const { cols, rows } = terminalRef.current?.getDimensions() || { cols: 80, rows: 24 };
-      socket.send(JSON.stringify({ type: "resize", cols, rows }));
-    };
-    socket.onmessage = (event) => {
-      let message;
-      try {
-        message = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      if (message.type === "ready") {
-        terminalReadyRef.current = true;
-        terminalRef.current?.focus();
-        if (pendingInputRef.current) {
-          socket.send(JSON.stringify({ type: "input", data: pendingInputRef.current }));
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ type: "start" }));
+        const { cols, rows } = terminalRef.current?.getDimensions() || {
+          cols: 80,
+          rows: 24,
+        };
+        socket.send(JSON.stringify({ type: "resize", cols, rows }));
+      };
+      socket.onmessage = (event) => {
+        let message;
+        try {
+          message = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        if (message.type === "ready") {
+          terminalReadyRef.current = true;
+          const dimensions = terminalRef.current?.getDimensions();
+          if (dimensions)
+            socket.send(JSON.stringify({ type: "resize", ...dimensions }));
+          terminalRef.current?.focus();
+          if (pendingInputRef.current) {
+            socket.send(
+              JSON.stringify({ type: "input", data: pendingInputRef.current }),
+            );
+            pendingInputRef.current = "";
+          }
+        } else if (message.type === "output") {
+          writeTerminal(message.data || "");
+        } else if (message.type === "error") {
+          setExecutionProblems((current) => [
+            ...current,
+            {
+              fileId,
+              filename,
+              message: message.message || "Execution failed.",
+            },
+          ]);
+          writeTerminal(
+            `\r\n\x1b[31m${message.message || "Execution failed."}\x1b[0m\r\n`,
+          );
+        } else if (message.type === "finished") {
+          finished = true;
+          terminalReadyRef.current = false;
+          if (message.reason === "completed" && message.exit_code !== 0) {
+            setExecutionProblems((current) => [
+              ...current,
+              {
+                fileId,
+                filename,
+                message: `Program exited with code ${message.exit_code}. See Terminal or Output for details.`,
+              },
+            ]);
+          }
+          if (message.reason === "stopped") writeTerminal("\r\n[Stopped]\r\n");
+          else if (message.reason === "timeout")
+            writeTerminal("\r\n[Timed out]\r\n");
+          else if (message.reason === "completed")
+            writeTerminal(`\r\n[Exited with code ${message.exit_code}]\r\n`);
+          socket.close();
+          resolve();
+        }
+      };
+      socket.onerror = () => {
+        if (!finished)
+          writeTerminal("\r\n\x1b[31mTerminal connection failed.\x1b[0m\r\n");
+      };
+      socket.onclose = () => {
+        if (activeSocketRef.current === socket) {
+          activeSocketRef.current = null;
+          terminalReadyRef.current = false;
           pendingInputRef.current = "";
         }
-      } else if (message.type === "output") {
-        writeTerminal(message.data || "");
-      } else if (message.type === "error") {
-        writeTerminal(`\r\n\x1b[31m${message.message || "Execution failed."}\x1b[0m\r\n`);
-      } else if (message.type === "finished") {
-        finished = true;
-        terminalReadyRef.current = false;
-        if (message.reason === "stopped") writeTerminal("\r\n[Stopped]\r\n");
-        else if (message.reason === "timeout") writeTerminal("\r\n[Timed out]\r\n");
-        else if (message.reason === "completed") writeTerminal(`\r\n[Exited with code ${message.exit_code}]\r\n`);
-        socket.close();
-        resolve();
-      }
-    };
-    socket.onerror = () => {
-      if (!finished) writeTerminal("\r\n\x1b[31mTerminal connection failed.\x1b[0m\r\n");
-    };
-    socket.onclose = () => {
-      if (activeSocketRef.current === socket) {
-        activeSocketRef.current = null;
-        terminalReadyRef.current = false;
-        pendingInputRef.current = "";
-      }
-      if (!finished) reject(new Error("Terminal connection closed before execution finished."));
-    };
-  });
+        if (!finished)
+          reject(
+            new Error("Terminal connection closed before execution finished."),
+          );
+      };
+    });
 
   const runFile = async () => {
     if (runInProgressRef.current) return;
     terminalRef.current?.clear();
+    terminalRef.current?.reveal();
+    setExecutionProblems([]);
     if (!activeFile) {
       writeTerminal("Select a file before running code.\r\n");
       return;
     }
     if (loadingFile) {
-      writeTerminal("Wait for the selected file to finish loading before running it.\r\n");
+      writeTerminal(
+        "Wait for the selected file to finish loading before running it.\r\n",
+      );
       return;
     }
     if (saveInProgressRef.current) {
-      writeTerminal("Wait for the current save to finish before running the file.\r\n");
+      writeTerminal(
+        "Wait for the current save to finish before running the file.\r\n",
+      );
       return;
     }
 
@@ -605,9 +701,12 @@ export default function WorkspacePage() {
           );
         }
       } else {
-        language = detectLanguageFromContent(fileContent) || askForLanguage();
+        language =
+          detectLanguageFromContent(fileContent) || (await chooseLanguage());
         if (!language) {
-          throw new Error("Choose python, c, or cpp to run this file. It was not renamed.");
+          throw new Error(
+            "Choose python, c, or cpp to run this file. It was not renamed.",
+          );
         }
       }
 
@@ -617,46 +716,82 @@ export default function WorkspacePage() {
       saveAttempted = true;
       setSaveStatus("Saving…");
       setSaveError("");
-      const savedFile = await responseData(await fetch(
-        `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: contentToRun,
-            name: newName,
-            language,
-          }),
-        },
-      ));
+      const savedFile = await responseData(
+        await fetch(
+          `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: contentToRun,
+              name: newName,
+              language,
+            }),
+          },
+        ),
+      );
       saveConfirmed = true;
       const revisionAfterSave = contentRevisionsRef.current.get(fileId) || 0;
-      if (revisionAfterSave !== revisionAtRun || activeFileRef.current?.id !== fileId) {
+      if (
+        revisionAfterSave !== revisionAtRun ||
+        activeFileRef.current?.id !== fileId
+      ) {
         if (activeFileRef.current?.id === fileId) {
-          dirtyFilesRef.current.add(fileId);
+          markDirty(fileId, true);
           setSaveStatus("Unsaved");
-          setSaveError("The file changed while saving. Run again to save and execute the latest edits.");
+          setSaveError(
+            "The file changed while saving. Run again to save and execute the latest edits.",
+          );
         }
-        throw new Error("The file changed while saving. Run again to save and execute the latest edits.");
+        throw new Error(
+          "The file changed while saving. Run again to save and execute the latest edits.",
+        );
       }
-      dirtyFilesRef.current.delete(fileId);
+      markDirty(fileId, false);
       setSaveStatus("Saved");
       setSaveError("");
-      setContentsByFile((current) => ({ ...current, [fileId]: savedFile.content ?? contentToRun }));
-      const runFileRecord = { ...activeFile, ...savedFile, name: newName, language, type: "file" };
-      setActiveFile((current) => current?.id === activeFile.id ? runFileRecord : current);
-      setTree((current) => replaceFileInTree(current, activeFile.id, runFileRecord));
+      setContentsByFile((current) => ({
+        ...current,
+        [fileId]: savedFile.content ?? contentToRun,
+      }));
+      setFileContent(savedFile.content ?? contentToRun);
+      const runFileRecord = {
+        ...activeFile,
+        ...savedFile,
+        name: newName,
+        language,
+        type: "file",
+      };
+      setActiveFile((current) =>
+        current?.id === activeFile.id ? runFileRecord : current,
+      );
+      setTree((current) =>
+        replaceFileInTree(current, activeFile.id, runFileRecord),
+      );
 
       setRunStage("running");
       writeTerminal("Running in an isolated container…\r\n");
-      await executeSavedFile(runFileRecord.id);
+      await executeSavedFile(runFileRecord.id, getFileName(runFileRecord));
     } catch (err) {
-      if (saveAttempted && !saveConfirmed && activeFileRef.current?.id === fileId) {
-        dirtyFilesRef.current.add(fileId);
+      if (
+        saveAttempted &&
+        !saveConfirmed &&
+        activeFileRef.current?.id === fileId
+      ) {
+        markDirty(fileId, true);
         setSaveStatus("Unsaved");
         setSaveError(`Save failed: ${err.message}`);
       }
-      writeTerminal(`\r\n\x1b[31m${err.message || "Code execution failed."}\x1b[0m\r\n`);
+      setExecutionProblems([
+        {
+          fileId,
+          filename: getFileName(activeFile),
+          message: err.message || "Code execution failed.",
+        },
+      ]);
+      writeTerminal(
+        `\r\n\x1b[31m${err.message || "Code execution failed."}\x1b[0m\r\n`,
+      );
     } finally {
       runInProgressRef.current = false;
       setRunStage("");
@@ -664,53 +799,481 @@ export default function WorkspacePage() {
     }
   };
 
+  useEffect(() => {
+    const shortcut = (event) => {
+      if (dialog) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        saveFile();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setSidebarOpen((value) => !value);
+      }
+      if (event.key === "F5") {
+        event.preventDefault();
+        runFile();
+      }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  });
+
+  const onEditorChange = (value) => {
+    if (!activeFile || loadingFile) return;
+    const content = value ?? "";
+    if (content === fileContent) return;
+    contentRevisionsRef.current.set(
+      activeFile.id,
+      (contentRevisionsRef.current.get(activeFile.id) || 0) + 1,
+    );
+    markDirty(activeFile.id, true);
+    setFileContent(content);
+    setContentsByFile((current) => ({ ...current, [activeFile.id]: content }));
+    setSaveStatus("Unsaved");
+    setSaveError("");
+  };
+  const refresh = async () => {
+    try {
+      await refreshWorkspaceTree();
+      setError("");
+    } catch (err) {
+      setActionMessage(err.message);
+      setActionError(true);
+    }
+  };
+  const defineEditorThemes = (monaco) => {
+    monaco.editor.defineTheme("studio-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [],
+      colors: {
+        "editor.background": "#15181e",
+        "editor.foreground": "#c9d1dd",
+        "editorLineNumber.foreground": "#535d6e",
+        "editorLineNumber.activeForeground": "#c0c9da",
+        "editor.lineHighlightBackground": "#1b2029",
+        "editor.selectionBackground": "#344566",
+        "editorCursor.foreground": "#90aaff",
+        "editorIndentGuide.background1": "#252c38",
+      },
+    });
+    monaco.editor.defineTheme("studio-light", {
+      base: "vs",
+      inherit: true,
+      rules: [],
+      colors: {
+        "editor.background": "#ffffff",
+        "editor.foreground": "#354052",
+        "editorLineNumber.foreground": "#a0a9b6",
+        "editor.lineHighlightBackground": "#f4f6fa",
+        "editor.selectionBackground": "#dce6ff",
+      },
+    });
+  };
+  const runDisabled =
+    running || loadingFile || Boolean(fileError) || manualSaving;
+
   return (
-    <main className="ide-shell">
+    <main className={`ide-shell theme-${theme}`}>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark">⌘</span><span>Web IDE</span><span className="top-divider" /><span className="workspace-name">{workspace?.name || "Workspace"}</span></div>
-        <div className="top-actions"><span className={`save-status ${saveError || saveStatus === "Unsaved" ? "save-error" : ""}`}>{saveStatus}</span>{saveError && <span className="save-error" role="alert" title={saveError}>{saveError}</span>}<button className="run-button" onClick={runFile} disabled={running || loadingFile || manualSaving}>{runStage === "saving" ? "Saving…" : running ? "Running…" : "▶ Run"}</button><button className="action-button" onClick={saveFile} disabled={!activeFile || manualSaving || running}>Save Content</button></div>
+        <div className="brand">
+          <span className="brand-mark">
+            <Code2 size={19} />
+          </span>
+          <strong>Workspace</strong>
+          <span className="top-divider" />
+          <span className="workspace-name">{workspace?.name || "Web IDE"}</span>
+        </div>
+        <button
+          className="command-search"
+          onClick={() => openSidebar("search")}
+        >
+          <Search size={14} />
+          <span>Search workspace</span>
+          <kbd>Files</kbd>
+        </button>
+        <div className="top-actions">
+          <button
+            className="button save-button"
+            onClick={saveFile}
+            disabled={
+              !activeFile ||
+              loadingFile ||
+              Boolean(fileError) ||
+              manualSaving ||
+              running
+            }
+          >
+            <Save size={14} />
+            <span>Save</span>
+          </button>
+          <button
+            className="button button-primary run-button"
+            onClick={runFile}
+            disabled={runDisabled}
+          >
+            {running ? (
+              <LoaderCircle size={14} className="spin" />
+            ) : (
+              <Play size={14} fill="currentColor" />
+            )}
+            <span>
+              {runStage === "saving" ? "Saving" : running ? "Running" : "Run"}
+            </span>
+            <kbd>F5</kbd>
+          </button>
+          <IconButton
+            icon={Settings2}
+            label="Open settings"
+            onClick={() => openSidebar("settings")}
+          />
+        </div>
       </header>
       <div className="ide-body">
-        <aside className="explorer">
-          <div className="explorer-heading"><span>Explorer</span></div>
-          <div className={`workspace-root ${selectedFolderId === null ? "root-selected" : ""}`} role="button" tabIndex={0} onClick={() => setSelectedFolderId(null)} onKeyDown={(event) => event.key === "Enter" && setSelectedFolderId(null)} title="Create items at workspace root"><span className="root-chevron">⌄</span><span className="root-icon">◈</span>{workspace?.name || "WORKSPACE"}</div>
-          <div className="explorer-actions"><button onClick={() => createItem("folder")} disabled={creating || loading || Boolean(error)}>＋ New Folder</button><button onClick={() => createItem("file")} disabled={creating || loading || Boolean(error)}>＋ New File</button></div>
-          {actionMessage && <div className={`explorer-message ${actionError ? "error-message" : "success-message"}`} role="status">{actionMessage}</div>}
-          <div className="tree-scroll">
-            {loading && <div className="tree-message">Loading workspace…</div>}
-            {!loading && error && <div className="tree-message error-message">{error}</div>}
-            {!loading && !error && tree.length === 0 && <div className="tree-message">This workspace is empty.</div>}
-            {tree.map((node) => <TreeItem
-              key={node.id} node={node} selectedId={activeFile?.id} selectedFolderId={selectedFolderId}
-              onSelect={selectFile} onSelectFolder={(folder) => setSelectedFolderId(folder.id)}
-              expanded={expanded} onToggle={toggleFolder} renamingFileId={renamingFileId}
-              renameValue={renameValue} setRenameValue={setRenameValue} renameError={renameError}
-              renameSaving={renameSaving} onStartRename={startRename} onSaveRename={saveRename}
-              onCancelRename={cancelRename}
-            />)}
+        <nav className="activity-bar" aria-label="Workspace views">
+          <div>
+            {[
+              { id: "explorer", icon: Files, label: "Explorer" },
+              { id: "search", icon: Search, label: "Search" },
+            ].map(({ id, icon: Icon, label }) => (
+              <IconButton
+                key={id}
+                icon={Icon}
+                label={label}
+                className={sidebarOpen && sidebarView === id ? "active" : ""}
+                aria-pressed={sidebarOpen && sidebarView === id}
+                onClick={() => {
+                  if (sidebarOpen && sidebarView === id) setSidebarOpen(false);
+                  else openSidebar(id);
+                }}
+              />
+            ))}
           </div>
-          <div className="explorer-footer"><span className="online-dot" /> Workspace files</div>
-        </aside>
-        <section className="editor-panel">
-          <div className="tab-strip">
-            {activeFile ? <div className="editor-tab active-tab"><span className="tab-file-icon">◦</span>{getFileName(activeFile)}</div> : <div className="tab-empty">No file open</div>}
-            <div className="tab-spacer" />
+          <div>
+            <IconButton
+              icon={theme === "dark" ? Sun : Moon}
+              label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            />
+            <IconButton
+              icon={Settings2}
+              label="Settings"
+              className={
+                sidebarOpen && sidebarView === "settings" ? "active" : ""
+              }
+              onClick={() => openSidebar("settings")}
+            />
+            <span className="workspace-avatar" title="Local workspace">
+              {(workspace?.name || "W").slice(0, 1).toUpperCase()}
+            </span>
           </div>
+        </nav>
+        {sidebarOpen && (
+          <>
+            <button
+              className="sidebar-backdrop"
+              aria-label="Close sidebar overlay"
+              onClick={() => setSidebarOpen(false)}
+            />
+            <aside className="sidebar" style={{ width: sidebarWidth }}>
+              {sidebarView === "explorer" ? (
+                <Explorer
+                  tree={tree}
+                  workspaceName={workspace?.name || "Workspace"}
+                  loading={loading}
+                  error={error}
+                  expanded={expanded}
+                  setExpanded={setExpanded}
+                  selectedId={activeFile?.id}
+                  selectedFolderId={selectedFolderId}
+                  onSelect={selectFile}
+                  onSelectFolder={setSelectedFolderId}
+                  onToggle={toggleFolder}
+                  onCreate={createItem}
+                  onRename={renameItem}
+                  onDelete={deleteItem}
+                  onRefresh={refresh}
+                  dirtyIds={dirtyIds}
+                  busy={creating || running || manualSaving}
+                  onClose={() => setSidebarOpen(false)}
+                />
+              ) : sidebarView === "search" ? (
+                <SearchSidebar files={files} onSelect={selectFile} />
+              ) : (
+                <SettingsPanel
+                  theme={theme}
+                  setTheme={setTheme}
+                  fontSize={fontSize}
+                  setFontSize={setFontSize}
+                  wordWrap={wordWrap}
+                  setWordWrap={setWordWrap}
+                />
+              )}
+              <ResizeHandle
+                orientation="vertical"
+                value={sidebarWidth}
+                min={190}
+                max={Math.max(190, Math.min(450, window.innerWidth - 350))}
+                onChange={setSidebarWidth}
+                label="Resize Explorer sidebar"
+              />
+            </aside>
+          </>
+        )}
+        <section
+          className={`editor-panel ${panelMaximized ? "panel-maximized" : ""}`}
+        >
+          <EditorTabs
+            files={openedFiles}
+            activeId={activeFile?.id}
+            dirtyIds={dirtyIds}
+            onSelect={selectFile}
+            onClose={closeTab}
+          />
+          <div className="editor-toolbar">
+            <div className="breadcrumbs">
+              <IconButton
+                icon={sidebarOpen ? PanelLeftClose : PanelLeftOpen}
+                label="Toggle sidebar"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+              />
+              <span>{workspace?.name || "Workspace"}</span>
+              {activeFile && (
+                <>
+                  <ChevronRight size={12} />
+                  <FileIcon file={activeFile} />
+                  <span title={activePath}>{getFileName(activeFile)}</span>
+                </>
+              )}
+            </div>
+            <div className="toolbar-actions">
+              {activeFile && <SaveIndicator status={saveStatus} />}
+              <IconButton
+                icon={Save}
+                label="Save file (Ctrl+S)"
+                onClick={saveFile}
+                disabled={
+                  !activeFile ||
+                  loadingFile ||
+                  Boolean(fileError) ||
+                  manualSaving ||
+                  running
+                }
+              />
+              <IconButton
+                icon={Play}
+                label="Run file (F5)"
+                onClick={runFile}
+                disabled={runDisabled}
+              />
+            </div>
+          </div>
+          {saveError && (
+            <div className="editor-alert" role="alert">
+              <AlertCircle size={14} />
+              <span>{saveError}</span>
+              <IconButton
+                icon={X}
+                label="Dismiss save error"
+                onClick={() => setSaveError("")}
+              />
+            </div>
+          )}
           <div className="editor-area">
-            {activeFile ? (loadingFile ? <div className="welcome-state"><p>Loading file…</p></div> : fileError ? <div className="welcome-state"><p>{fileError}</p></div> : <Editor height="100%" theme="vs-dark" language={languageFor(activeFile)} value={fileContent} onChange={(value) => {
-              const content = value ?? "";
-              contentRevisionsRef.current.set(activeFile.id, (contentRevisionsRef.current.get(activeFile.id) || 0) + 1);
-              dirtyFilesRef.current.add(activeFile.id);
-              setFileContent(content);
-              setContentsByFile((current) => ({ ...current, [activeFile.id]: content }));
-              setSaveStatus("Unsaved");
-              setSaveError("");
-            }} options={{ fontSize: 14, fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace", minimap: { enabled: false }, scrollBeyondLastLine: false, automaticLayout: true, padding: { top: 16 }, lineNumbersMinChars: 3, renderLineHighlight: "line", overviewRulerBorder: false }} />) : <div className="welcome-state"><div className="welcome-glyph">{loading ? "◌" : "⌘"}</div><p>{loading ? "Opening your workspace…" : "Select a file to view its content"}</p><span>{error || (files.length ? "Choose a file from the Explorer" : "Your workspace is empty")}</span></div>}
+            {activeFile ? (
+              <>
+                <Suspense
+                  fallback={
+                    <div className="editor-loading">
+                      <LoaderCircle className="spin" size={22} />
+                      <span>Preparing your editor…</span>
+                    </div>
+                  }
+                >
+                  <Editor
+                    height="100%"
+                    path={`file:///${workspaceId}/${activeFile.id}`}
+                    saveViewState
+                    keepCurrentModel
+                    theme={`studio-${theme}`}
+                    beforeMount={defineEditorThemes}
+                    language={languageFor(activeFile)}
+                    value={fileContent}
+                    onChange={onEditorChange}
+                    onMount={(editor) => {
+                      editorRef.current = editor;
+                      cursorSubscriptionRef.current?.dispose();
+                      cursorSubscriptionRef.current =
+                        editor.onDidChangeCursorPosition(({ position }) =>
+                          setCursor({
+                            line: position.lineNumber,
+                            column: position.column,
+                          }),
+                        );
+                    }}
+                    onValidate={(markers) =>
+                      setDiagnostics((current) => ({
+                        ...current,
+                        [activeFile.id]: markers.map((marker) => ({
+                          fileId: activeFile.id,
+                          filename: getFileName(activeFile),
+                          message: marker.message,
+                          line: marker.startLineNumber,
+                        })),
+                      }))
+                    }
+                    loading={
+                      <div className="editor-loading">
+                        <LoaderCircle className="spin" size={22} />
+                        <span>Preparing your editor…</span>
+                      </div>
+                    }
+                    options={{
+                      fontSize,
+                      fontFamily:
+                        "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
+                      fontLigatures: true,
+                      minimap: { enabled: false },
+                      wordWrap: wordWrap ? "on" : "off",
+                      readOnly: loadingFile || Boolean(fileError),
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      padding: { top: 20, bottom: 20 },
+                      lineNumbersMinChars: 4,
+                      renderLineHighlight: "line",
+                      overviewRulerBorder: false,
+                      smoothScrolling: true,
+                      cursorSmoothCaretAnimation: "on",
+                      bracketPairColorization: { enabled: true },
+                    }}
+                  />
+                </Suspense>
+                {(loadingFile || fileError) && (
+                  <div className="editor-overlay">
+                    {loadingFile ? (
+                      <LoaderCircle size={22} className="spin" />
+                    ) : (
+                      <AlertCircle size={22} />
+                    )}
+                    <p>{fileError || "Opening file…"}</p>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="welcome-state">
+                <div className="welcome-logo">
+                  <Code2 size={38} strokeWidth={1.2} />
+                </div>
+                <span className="eyebrow">YOUR SPACE TO BUILD</span>
+                <h1>Make something great.</h1>
+                <p>
+                  Open a file, explore an idea, and bring it to life.
+                  <br />
+                  Your workspace is ready when you are.
+                </p>
+                <div className="welcome-actions">
+                  <button
+                    className="button button-primary"
+                    onClick={() => createItem("file", null)}
+                    disabled={loading || Boolean(error)}
+                  >
+                    <FilePlus2 size={15} />
+                    Create a file
+                    <ArrowRight size={14} />
+                  </button>
+                  <button
+                    className="button"
+                    onClick={() => openSidebar("explorer")}
+                  >
+                    <FolderOpen size={15} />
+                    Explore files
+                  </button>
+                </div>
+                <div className="welcome-shortcuts">
+                  <span>
+                    Save your work<kbd>Ctrl / ⌘ S</kbd>
+                  </span>
+                  <span>
+                    Run a program<kbd>F5</kbd>
+                  </span>
+                  <span>
+                    Toggle sidebar<kbd>Ctrl / ⌘ B</kbd>
+                  </span>
+                </div>
+                {error && <p className="error-text">{error}</p>}
+              </div>
+            )}
           </div>
-          <TerminalPanel ref={terminalRef} onInput={sendTerminalInput} onResize={sendTerminalResize} onStop={stopRun} running={running && runStage === "running"} />
+          <TerminalPanel
+            ref={terminalRef}
+            onInput={sendTerminalInput}
+            onResize={sendTerminalResize}
+            onStop={stopRun}
+            running={running}
+            runStage={runStage}
+            theme={theme}
+            problems={problems}
+            onMaximize={setPanelMaximized}
+            onProblemSelect={(problem) => {
+              const file = findFileById(tree, problem.fileId);
+              if (file) selectFile(file);
+            }}
+          />
         </section>
       </div>
-      <footer className="statusbar"><div className="status-left"><span>{workspace?.name || "Workspace"}</span></div><div className="status-right"><span>{activeFile ? languageFor(activeFile) : "Ready"}</span><span>UTF-8</span></div></footer>
+      <footer className="statusbar">
+        <div className="status-left">
+          <span className="status-workspace">
+            <Code2 size={12} />
+            {workspace?.name || "Workspace"}
+          </span>
+          <button onClick={() => terminalRef.current?.reveal("problems")}>
+            <AlertCircle size={12} />
+            {problems.length} problems
+          </button>
+          <span className="status-file" title={activePath}>
+            {activeFile ? getFileName(activeFile) : "No file open"}
+          </span>
+        </div>
+        <div className="status-right">
+          {activeFile && (
+            <>
+              <span className="cursor-status">
+                Ln {cursor.line}, Col {cursor.column}
+              </span>
+              <SaveIndicator status={saveStatus} />
+              <span>{languageFor(activeFile)}</span>
+            </>
+          )}
+          <span className="encoding-status">UTF-8</span>
+          <span className={`status-execution ${running ? "is-running" : ""}`}>
+            <span className="connection-dot" />
+            {runStage === "saving" ? "Saving…" : running ? "Running" : "Ready"}
+          </span>
+        </div>
+      </footer>
+      {actionMessage && (
+        <div
+          className={`toast ${actionError ? "toast-error" : ""}`}
+          role={actionError ? "alert" : "status"}
+        >
+          {actionError ? <AlertCircle size={17} /> : <Check size={17} />}
+          <span>{actionMessage}</span>
+          <IconButton
+            icon={X}
+            label="Dismiss notification"
+            onClick={() => setActionMessage("")}
+          />
+        </div>
+      )}
+      {dialog && (
+        <ResourceDialog
+          key={dialog.title}
+          dialog={dialog}
+          onClose={closeDialog}
+        />
+      )}
     </main>
   );
 }
