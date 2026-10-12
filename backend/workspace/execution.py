@@ -61,7 +61,6 @@ def language_from_content(source):
     cpp_markers = (
         r"(?m)^\s*#\s*include\s*[<\"](?:iostream|bits/stdc\+\+\.h)[>\"]",
         r"\bstd::(?:cout|cin|cerr)\b",
-        r"\bint\s+main\s*\(\s*(?:int\s+\w+\s*,\s*char\s*\*\s*\w+\[\s*\])?\s*\)",
     )
 
     evidence = []

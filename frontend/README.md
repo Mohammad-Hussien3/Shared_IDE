@@ -41,7 +41,7 @@ npm run lint
 npm run build
 ```
 
-The helper tests cover extension display, language detection, ambiguous content, and recursive tree updates. Browser regression checks should use a disposable workspace and cover:
+Vitest and React Testing Library cover filename/tree helpers, Explorer operations, tabs, dialogs, settings, save races, execution events, and terminal behavior. Browser regression checks should use a disposable workspace and cover:
 
 1. Create root/nested folders and files; rename each; delete a file and a nested folder.
 2. Edit two files, switch tabs, and verify drafts, cursor positions, and dirty indicators.

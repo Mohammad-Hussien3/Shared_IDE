@@ -11,8 +11,8 @@ from asgiref.testing import ApplicationCommunicator
 from django.test import SimpleTestCase, TestCase
 
 from Shared_IDE.asgi import application
-from .consumers import TerminalConsumer
-from .models import File, Workspace
+from workspace.consumers import TerminalConsumer
+from workspace.models import File, Workspace
 
 
 ORIGIN = [(b"origin", b"http://localhost:5173")]
@@ -252,3 +252,163 @@ class TerminalSavedFileTests(TestCase):
 
         consumer.scope["url_route"]["kwargs"]["workspace_id"] = str(other_workspace.id)
         self.assertIsNone(saved_file_query(consumer))
+
+
+class FakeInteractiveRunner:
+    """An in-memory process boundary; the real ASGI consumer still runs."""
+    instances = []
+    failure = None
+
+    def __init__(self, language, source):
+        from unittest.mock import AsyncMock, Mock
+        self.language, self.source = language, source
+        self.process = SimpleNamespace(wait=AsyncMock(return_value=0))
+        self.output_limited = False
+        self.queue = asyncio.Queue()
+        self.inputs = []
+        self.resize = Mock()
+        self.stopped = False
+        self.instances.append(self)
+
+    async def start(self):
+        if self.failure: raise self.failure
+        self.queue.put_nowait(b'prompt: ')
+
+    async def output_chunks(self):
+        while True:
+            chunk = await self.queue.get()
+            if chunk is None: return
+            yield chunk
+
+    async def write(self, text):
+        if len(text) > 4096: raise ValueError('Terminal input limit reached.')
+        self.inputs.append(text)
+        self.queue.put_nowait(('echo: ' + text).encode())
+        if text == 'done\r': self.queue.put_nowait(None)
+
+    async def stop(self):
+        if not self.stopped:
+            self.stopped = True
+            self.queue.put_nowait(None)
+
+
+class MockTerminalTests(SimpleTestCase):
+    communicator = TerminalWebSocketTests.communicator
+    connect_and_start = TerminalWebSocketTests.connect_and_start
+    collect_until = TerminalWebSocketTests.collect_until
+
+    def setUp(self):
+        TerminalWebSocketTests.setUp(self)
+        FakeInteractiveRunner.instances = []
+        FakeInteractiveRunner.failure = None
+        patcher = patch('workspace.consumers.InteractiveRunner', FakeInteractiveRunner)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def ready_client(self):
+        client = await self.connect_and_start()
+        messages = await self.collect_until(client, 'output')
+        self.assertEqual(messages[0]['type'], 'ready')
+        self.assertEqual(messages[-1]['data'], 'prompt: ')
+        return client
+
+    async def test_saved_content_streaming_multiple_inputs_and_completion(self):
+        client = await self.ready_client()
+        process = FakeInteractiveRunner.instances[0]
+        self.assertEqual((process.language, process.source), ('python', self.file.content))
+        await client.send_json_to({'type': 'input', 'data': 'first\r'})
+        self.assertEqual((await client.receive_json_from())['data'], 'echo: first\r')
+        await client.send_json_to({'type': 'input', 'data': 'done\r'})
+        messages = await self.collect_until(client)
+        self.assertEqual(messages[-1], {'type': 'finished', 'reason': 'completed', 'exit_code': 0})
+        self.assertEqual(process.inputs, ['first\r', 'done\r'])
+        await client.disconnect()
+        self.assertTrue(process.stopped)
+
+    async def test_socket_ownership_stop_and_fresh_session(self):
+        first, second = await self.ready_client(), await self.ready_client()
+        a, b = FakeInteractiveRunner.instances
+        await first.send_json_to({'type': 'input', 'data': 'private\r'})
+        self.assertIn('private', (await first.receive_json_from())['data'])
+        self.assertEqual(b.inputs, [])
+        self.assertTrue(await second.receive_nothing(timeout=0.02))
+        await first.send_json_to({'type': 'stop'})
+        self.assertEqual((await self.collect_until(first))[-1]['reason'], 'stopped')
+        await first.disconnect()
+        self.assertFalse(b.stopped)
+        await second.disconnect()
+        self.assertTrue(b.stopped)
+        fresh = await self.ready_client()
+        self.assertEqual(FakeInteractiveRunner.instances[-1].inputs, [])
+        await fresh.disconnect()
+
+    async def test_invalid_messages_duplicate_start_and_input_limits(self):
+        client = await self.ready_client()
+        for payload, expected in [([], 'Invalid'), ({'type': 'unknown'}, 'Unknown'), ({'type': 'start'}, 'already started'), ({'type': 'input', 'data': 42}, 'must be text'), ({'type': 'input', 'data': 'x' * 4097}, 'limit')]:
+            await client.send_json_to(payload)
+            message = await client.receive_json_from()
+            self.assertEqual(message['type'], 'error')
+            self.assertIn(expected, message['message'])
+        self.assertEqual(len(FakeInteractiveRunner.instances), 1)
+        await client.disconnect()
+
+    async def test_resize_validation(self):
+        client = await self.ready_client()
+        process = FakeInteractiveRunner.instances[0]
+        for cols, rows in [(0, 24), (80, 0), (501, 24), (80, 201), (True, 24), ('80', 24)]:
+            await client.send_json_to({'type': 'resize', 'cols': cols, 'rows': rows})
+        process.resize.assert_not_called()
+        await client.send_json_to({'type': 'resize', 'cols': 100, 'rows': 30})
+        process.resize.assert_called_once_with(100, 30)
+        await client.disconnect()
+
+    async def test_timeout_reports_failure_and_cleans_up(self):
+        with patch('workspace.consumers.INTERACTIVE_TIMEOUT_SECONDS', 0.08):
+            client = await self.connect_and_start()
+            messages = await self.collect_until(client)
+            self.assertTrue(any(item.get('message') == 'Execution timed out.' for item in messages))
+            self.assertEqual(messages[-1]['reason'], 'timeout')
+            await client.disconnect()
+            self.assertTrue(FakeInteractiveRunner.instances[0].stopped)
+
+    async def test_output_limit_and_split_utf8(self):
+        client = await self.ready_client()
+        process = FakeInteractiveRunner.instances[0]
+        process.queue.put_nowait(b'\xe2\x82')
+        process.queue.put_nowait(b'\xac')
+        process.output_limited = True
+        process.queue.put_nowait(None)
+        messages = await self.collect_until(client)
+        self.assertEqual(''.join(item.get('data', '') for item in messages), '€')
+        self.assertEqual(messages[-1]['reason'], 'output_limit')
+        self.assertTrue(any('Output limit' in item.get('message', '') for item in messages))
+        await client.disconnect()
+
+    async def test_runner_unavailable_and_unexpected_error_are_safe(self):
+        from workspace.runner import RunnerUnavailable
+        for error, expected in [(RunnerUnavailable('image missing'), 'image missing'), (RuntimeError('private internal detail'), 'The terminal session failed.')]:
+            FakeInteractiveRunner.failure = error
+            with patch('workspace.consumers.logger.exception'):
+                client = await self.connect_and_start()
+                messages = await self.collect_until(client)
+            self.assertEqual(messages[0]['message'], expected)
+            self.assertEqual(messages[-1]['reason'], 'error')
+            await client.disconnect()
+            self.assertTrue(FakeInteractiveRunner.instances[-1].stopped)
+
+    async def test_unsupported_ambiguous_and_oversized_files_never_start_runner(self):
+        for name, source in [('main.js', 'console.log(1)'), ('main', 'x = 1'), ('main.py', 'x' * 65537)]:
+            self.file.name, self.file.content = name, source
+            client = await self.connect_and_start()
+            messages = await self.collect_until(client)
+            self.assertEqual(messages[0]['type'], 'error')
+            self.assertEqual(messages[-1]['reason'], 'error')
+            await client.disconnect()
+        self.assertEqual(FakeInteractiveRunner.instances, [])
+
+    async def test_disconnect_before_start_does_not_create_process(self):
+        client = self.communicator()
+        await client.connect()
+        await client.send_json_to({'type': 'input', 'data': 'ignored'})
+        await client.disconnect()
+        self.assertEqual(FakeInteractiveRunner.instances, [])

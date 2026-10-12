@@ -82,10 +82,18 @@ class FolderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "Parent folder must belong to this workspace."
             )
+        ancestor = parent
+        seen = set()
+        while ancestor is not None:
+            if ancestor.pk in seen or (self.instance and ancestor.pk == self.instance.pk):
+                raise serializers.ValidationError("A folder cannot be its own ancestor.")
+            seen.add(ancestor.pk)
+            ancestor = ancestor.parent
         return parent
 
 
 class FileSerializer(serializers.ModelSerializer):
+    content = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     folder = serializers.PrimaryKeyRelatedField(
         queryset=Folder.objects.all(),
         required=False,
@@ -133,4 +141,4 @@ class FileSerializer(serializers.ModelSerializer):
 
 
 class RunFileRequestSerializer(serializers.Serializer):
-    content = serializers.CharField(allow_blank=True, max_length=65536)
+    content = serializers.CharField(allow_blank=True, max_length=65536, trim_whitespace=False)
