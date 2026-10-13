@@ -1,0 +1,170 @@
+.account-shell {
+  overflow-y: auto;
+}
+.account-topbar {
+  min-height: 64px;
+  padding: 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.account-topbar .brand {
+  color: var(--strong);
+  font-size: 15px;
+}
+.account-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+.account-name {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-error {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  width: 280px;
+  padding: 12px;
+  background: var(--surface);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  z-index: 50;
+}
+.auth-card {
+  width: min(400px, calc(100% - 40px));
+  margin: auto;
+  padding: 36px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.auth-card h1,
+.dashboard h1 {
+  margin: 0;
+  color: var(--strong);
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.7px;
+}
+.auth-card p,
+.dashboard-heading p {
+  color: var(--muted);
+  margin: 0;
+  font-size: 14px;
+}
+.auth-card .auth-hint {
+  font-size: 12px;
+}
+.auth-card a {
+  color: var(--accent);
+}
+.auth-card input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 42px;
+}
+.auth-card > .button {
+  height: 42px;
+}
+.dashboard {
+  width: min(1050px, calc(100% - 56px));
+  margin: 48px auto;
+}
+.dashboard-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+  margin-bottom: 30px;
+}
+.dashboard-heading h1 {
+  margin: 8px 0;
+}
+.dashboard-empty {
+  margin: auto;
+  padding: 70px 20px;
+  text-align: center;
+  color: var(--muted);
+}
+.dashboard-empty h2 {
+  color: var(--strong);
+}
+.dashboard-notice {
+  color: var(--success);
+}
+.workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 18px;
+}
+.workspace-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 24px 20px 14px;
+  background: var(--surface);
+  transition: border-color 0.15s;
+}
+.workspace-card:hover {
+  border-color: var(--faint);
+}
+.workspace-card-icon {
+  color: var(--accent);
+}
+.workspace-card-link {
+  display: block;
+  color: var(--strong);
+  font-size: 17px;
+  font-weight: 500;
+  margin: 15px 0 22px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.workspace-card-link:hover {
+  color: var(--accent);
+}
+.workspace-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--muted);
+}
+.dashboard-link {
+  color: var(--muted);
+  text-decoration: none;
+}
+.dashboard-link:hover {
+  color: var(--strong);
+}
+@media (max-width: 760px) {
+  .account-topbar {
+    padding: 0 16px;
+  }
+  .account-name {
+    display: none;
+  }
+  .dashboard {
+    width: calc(100% - 32px);
+    margin-top: 28px;
+  }
+  .dashboard-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .topbar .brand > strong,
+  .topbar .account-controls .button svg {
+    display: none;
+  }
+  .topbar .account-controls {
+    gap: 0;
+  }
+}

@@ -8,6 +8,10 @@ import {
   useState,
 } from "react";
 import TerminalPanel from "../components/TerminalPanel";
+import { Link } from "react-router-dom";
+import { useAuth } from "../auth/context";
+import AccountControls from "../components/AccountControls";
+import { API_BASE_URL, WS_BASE_URL, responseData } from "../lib/api";
 import {
   AlertCircle,
   ArrowRight,
@@ -56,27 +60,25 @@ import "../App.css";
 
 const Editor = lazy(() => import("../components/CodeEditor"));
 
-const API_URL = import.meta.env.VITE_API_URL;
-const DEFAULT_WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID;
-const API_BASE_URL = API_URL?.replace(/\/$/, "");
-const WS_BASE_URL = API_BASE_URL?.replace(/^http(s?):/, "ws$1:");
-async function responseData(response) {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message =
-      data.detail ||
-      Object.values(data).flat().join(" ") ||
-      response.statusText;
-    throw new Error(`HTTP ${response.status}${message ? `: ${message}` : ""}`);
-  }
-  return data;
-}
-
-export default function WorkspacePage() {
-  const [workspace, setWorkspace] = useState(null);
-  const [workspaceId] = useState(
-    () => DEFAULT_WORKSPACE_ID || localStorage.getItem("workspace_id") || "",
+export default function WorkspacePage({ workspaceId }) {
+  const { client, user } = useAuth();
+  const requestControllerRef = useRef(null);
+  const mountedRef = useRef(false);
+  const apiFetch = useCallback(
+    async (url, options = {}) => {
+      const controller = requestControllerRef.current;
+      if (!controller || controller.signal.aborted)
+        throw new Error("Workspace closed.");
+      const response = await client.fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) throw new Error("Workspace closed.");
+      return response;
+    },
+    [client],
   );
+  const [workspace, setWorkspace] = useState(null);
   const [tree, setTree] = useState([]);
   const [activeFile, setActiveFile] = useState(null);
   const [selectedFolderId, setSelectedFolderId] = useState(null);
@@ -85,14 +87,8 @@ export default function WorkspacePage() {
   const [loadingFile, setLoadingFile] = useState(false);
   const [fileError, setFileError] = useState("");
   const [expanded, setExpanded] = useState(new Set());
-  const [loading, setLoading] = useState(Boolean(workspaceId && API_URL));
-  const [error, setError] = useState(() =>
-    !workspaceId
-      ? "No workspace found. Create or select a workspace to get started."
-      : !API_URL
-        ? "VITE_API_URL is not configured."
-        : "",
-  );
+  const [loading, setLoading] = useState(Boolean(workspaceId));
+  const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [saveError, setSaveError] = useState("");
   const [manualSaving, setManualSaving] = useState(false);
@@ -141,7 +137,18 @@ export default function WorkspacePage() {
   useEffect(() => {
     activeFileRef.current = activeFile;
   }, [activeFile]);
-  useEffect(() => () => activeSocketRef.current?.close(), []);
+  useEffect(() => {
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      controller.abort();
+      fileRequestId.current += 1;
+      activeFileRef.current = null;
+      activeSocketRef.current?.close();
+    };
+  }, []);
   const files = useMemo(() => flattenFiles(tree), [tree]);
   const openedFiles = openFileIds
     .map(
@@ -200,9 +207,9 @@ export default function WorkspacePage() {
   };
 
   useEffect(() => {
-    if (!workspaceId || !API_URL) return;
+    if (!workspaceId) return;
     let cancelled = false;
-    fetch(`${API_BASE_URL}/workspaces/${workspaceId}/`)
+    apiFetch(`${API_BASE_URL}/workspaces/${workspaceId}/`)
       .then(responseData)
       .then((data) => {
         if (cancelled) return;
@@ -225,7 +232,7 @@ export default function WorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId]);
+  }, [workspaceId, apiFetch]);
 
   const selectFile = useCallback(
     async (file) => {
@@ -249,7 +256,7 @@ export default function WorkspacePage() {
 
       try {
         const fetchedFile = await responseData(
-          await fetch(
+          await apiFetch(
             `${API_BASE_URL}/workspaces/${workspaceId}/files/${file.id}/`,
           ),
         );
@@ -265,7 +272,7 @@ export default function WorkspacePage() {
         if (requestId === fileRequestId.current) setLoadingFile(false);
       }
     },
-    [workspaceId, contentsByFile],
+    [workspaceId, contentsByFile, apiFetch],
   );
 
   const toggleFolder = (id) =>
@@ -279,7 +286,7 @@ export default function WorkspacePage() {
   const refreshWorkspaceTree = useCallback(
     async (folderIdsToExpand = []) => {
       const data = await responseData(
-        await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/`),
+        await apiFetch(`${API_BASE_URL}/workspaces/${workspaceId}/`),
       );
       setWorkspace(data);
       setTree(data.children || []);
@@ -288,7 +295,7 @@ export default function WorkspacePage() {
       }
       return data;
     },
-    [workspaceId],
+    [workspaceId, apiFetch],
   );
 
   const createItem = (type, folderId = selectedFolderId) =>
@@ -322,11 +329,14 @@ export default function WorkspacePage() {
             ...(folderId ? { folder: folderId } : {}),
           };
       const created = await responseData(
-        await fetch(`${API_BASE_URL}/workspaces/${workspaceId}/${endpoint}/`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }),
+        await apiFetch(
+          `${API_BASE_URL}/workspaces/${workspaceId}/${endpoint}/`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          },
+        ),
       );
       const visibleFolderPath = findFolderPath(tree, folderId);
       await refreshWorkspaceTree(
@@ -383,7 +393,7 @@ export default function WorkspacePage() {
     setSaveError("");
     try {
       const updated = await responseData(
-        await fetch(
+        await apiFetch(
           `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
           {
             method: "PATCH",
@@ -437,7 +447,7 @@ export default function WorkspacePage() {
           ? inputName
           : normalizeFilename(inputName, language);
         const updated = await responseData(
-          await fetch(
+          await apiFetch(
             `${API_BASE_URL}/workspaces/${workspaceId}/${isFolder ? "folders" : "files"}/${node.id}/`,
             {
               method: "PATCH",
@@ -500,7 +510,7 @@ export default function WorkspacePage() {
       danger: true,
       submitLabel: "Delete",
       onSubmit: async () => {
-        const response = await fetch(
+        const response = await apiFetch(
           `${API_BASE_URL}/workspaces/${workspaceId}/${node.type === "folder" ? "folders" : "files"}/${node.id}/`,
           { method: "DELETE" },
         );
@@ -569,8 +579,10 @@ export default function WorkspacePage() {
     }
   };
 
-  const executeSavedFile = (fileId, filename) =>
-    new Promise((resolve, reject) => {
+  const executeSavedFile = async (fileId, filename) => {
+    const accessToken = await client.getAccessToken();
+    if (!mountedRef.current) throw new Error("Workspace closed.");
+    return new Promise((resolve, reject) => {
       const socket = new WebSocket(
         `${WS_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/run/`,
       );
@@ -580,6 +592,11 @@ export default function WorkspacePage() {
       let finished = false;
 
       socket.onopen = () => {
+        socket.send(
+          JSON.stringify({ type: "authenticate", token: accessToken }),
+        );
+      };
+      const startProgram = () => {
         socket.send(JSON.stringify({ type: "start" }));
         const { cols, rows } = terminalRef.current?.getDimensions() || {
           cols: 80,
@@ -594,7 +611,9 @@ export default function WorkspacePage() {
         } catch {
           return;
         }
-        if (message.type === "ready") {
+        if (message.type === "authenticated") {
+          startProgram();
+        } else if (message.type === "ready") {
           terminalReadyRef.current = true;
           const dimensions = terminalRef.current?.getDimensions();
           if (dimensions)
@@ -646,7 +665,9 @@ export default function WorkspacePage() {
         if (!finished)
           writeTerminal("\r\n\x1b[31mTerminal connection failed.\x1b[0m\r\n");
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
+        if (event?.code === 4401 && mountedRef.current)
+          client.restore().catch(() => {});
         if (activeSocketRef.current === socket) {
           activeSocketRef.current = null;
           terminalReadyRef.current = false;
@@ -658,6 +679,7 @@ export default function WorkspacePage() {
           );
       };
     });
+  };
 
   const runFile = async () => {
     if (runInProgressRef.current) return;
@@ -717,7 +739,7 @@ export default function WorkspacePage() {
       setSaveStatus("Saving…");
       setSaveError("");
       const savedFile = await responseData(
-        await fetch(
+        await apiFetch(
           `${API_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/`,
           {
             method: "PATCH",
@@ -881,7 +903,13 @@ export default function WorkspacePage() {
           <span className="brand-mark">
             <Code2 size={19} />
           </span>
-          <strong>Workspace</strong>
+          <Link
+            className="dashboard-link"
+            to="/workspaces"
+            title="Back to workspaces"
+          >
+            Workspaces
+          </Link>
           <span className="top-divider" />
           <span className="workspace-name">{workspace?.name || "Web IDE"}</span>
         </div>
@@ -894,6 +922,7 @@ export default function WorkspacePage() {
           <kbd>Files</kbd>
         </button>
         <div className="top-actions">
+          <AccountControls />
           <button
             className="button save-button"
             onClick={saveFile}
@@ -964,8 +993,8 @@ export default function WorkspacePage() {
               }
               onClick={() => openSidebar("settings")}
             />
-            <span className="workspace-avatar" title="Local workspace">
-              {(workspace?.name || "W").slice(0, 1).toUpperCase()}
+            <span className="workspace-avatar" title={user.username}>
+              {user.username.slice(0, 1).toUpperCase()}
             </span>
           </div>
         </nav>
@@ -1092,6 +1121,7 @@ export default function WorkspacePage() {
                   }
                 >
                   <Editor
+                    workspaceId={workspaceId}
                     height="100%"
                     path={`file:///${workspaceId}/${activeFile.id}`}
                     saveViewState
