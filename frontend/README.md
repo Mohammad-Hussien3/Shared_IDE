@@ -9,7 +9,17 @@ npm install
 npm run dev
 ```
 
-Set `VITE_API_URL` to the Django API base (for example, `http://127.0.0.1:8000/api`) and `VITE_WORKSPACE_ID` to an existing workspace UUID in `.env`. Run Django and prepare its Podman images using the project's existing setup. The frontend does not execute code locally.
+Set `VITE_API_URL=/api` (see `.env.example`). Vite forwards `/api` HTTP and WebSocket requests to Django at `http://127.0.0.1:8000`, while browser cookies stay on whichever frontend hostname you open: `http://localhost:5173` or `http://127.0.0.1:5173`. Restart Vite after changing `.env`. For a different backend port, start Vite with `DEV_API_TARGET=http://127.0.0.1:8001 npm run dev`. Port 5173 is fixed so Vite will not silently switch to an untrusted origin.
+
+Register or log in, then create/open a workspace from the dashboard. `VITE_WORKSPACE_ID` and the old anonymous localStorage selection are no longer used. Run Django migrations and prepare its Podman images using the project's existing setup. The frontend does not execute code locally.
+
+### CSRF and local hostnames
+
+A frontend on `localhost` calling an API on `127.0.0.1` cannot use the default `SameSite=Lax` cookies, even with correct CORS/trusted-origin settings. The original local configuration reproduced HTTP 403 with `X-CSRFToken` present but the CSRF cookie missing. Use the relative `/api` URL above; if using a direct absolute API URL, use the same hostname for both apps.
+
+Django's `FRONTEND_ORIGINS` defaults to `http://localhost:5173,http://127.0.0.1:5173` for both CORS and CSRF origin checking. Add an exact origin if you use a custom frontend port. For local HTTP use `AUTH_COOKIE_SECURE=false`; production HTTPS defaults remain secure. CSRF protection, HttpOnly cookies, and `SameSite=Lax` stay enabled.
+
+The API client fetches `/api/auth/csrf/` with credentials and caching disabled before cookie-authenticated requests. Registration, login, refresh, and logout send credentials and `X-CSRFToken`. A stale token is refreshed once after an explicit CSRF rejection; persistent failures are shown, with Django's reason included only in debug mode. Production needs its own `/api` reverse proxy or a correctly configured absolute API URL; Vite's development proxy is not part of the production build.
 
 ## Interface
 
@@ -22,6 +32,9 @@ Set `VITE_API_URL` to the Django API base (for example, `http://127.0.0.1:8000/a
 - Shortcuts: Ctrl/Cmd+S saves, F5 runs, Ctrl/Cmd+B toggles the sidebar.
 
 ## Structure
+
+- `src/auth/AuthContext.jsx` and `src/lib/api.js`: in-memory access tokens, refresh-cookie session restoration, authenticated HTTP requests, and logout.
+- `src/pages/AuthPage.jsx` and `src/pages/WorkspaceDashboard.jsx`: registration, login, and user-owned workspaces.
 
 - `src/pages/WorkspacePage.jsx`: workspace state, existing API calls, save/run lifecycle, and layout composition.
 - `src/components/Explorer.jsx`: recursive tree, context menus, and file search.

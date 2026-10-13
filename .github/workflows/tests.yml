@@ -15,7 +15,7 @@ jobs:
       run:
         working-directory: backend
     env:
-      DJANGO_SECRET_KEY: ci-only-test-key
+      DJANGO_SECRET_KEY: ci-only-test-key-not-used-for-production-credentials
       DJANGO_DEBUG: "false"
       DJANGO_ALLOWED_HOSTS: localhost,testserver
       DATABASE_NAME: /tmp/workspace-ci.sqlite3
