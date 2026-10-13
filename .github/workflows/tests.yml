@@ -17,7 +17,7 @@ jobs:
     env:
       DJANGO_SECRET_KEY: ci-only-test-key-not-used-for-production-credentials
       DJANGO_DEBUG: "false"
-      DJANGO_ALLOWED_HOSTS: localhost,testserver
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
       DATABASE_NAME: /tmp/workspace-ci.sqlite3
       RUN_PODMAN_INTEGRATION_TESTS: "0"
     steps:
