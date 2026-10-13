@@ -1,11 +1,14 @@
 from unittest.mock import patch
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APITestCase
 from workspace.models import File, Workspace
 
 class FileRunAPITests(APITestCase):
     def setUp(self):
-        self.workspace = Workspace.objects.create(name="Run workspace")
+        self.user = get_user_model().objects.create_user(username='runner')
+        self.client.force_authenticate(self.user)
+        self.workspace = Workspace.objects.create(name="Run workspace", owner=self.user)
         self.file = File.objects.create(
             workspace=self.workspace,
             name="main.py",

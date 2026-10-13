@@ -8,6 +8,9 @@ import {
 } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import WorkspacePage from "./WorkspacePage";
+import { MemoryRouter } from "react-router-dom";
+import { AuthContext } from "../auth/context";
+import { WORKSPACE_ID } from "../test/workspaceFixtures";
 import { MockTerminal } from "../test/terminalMock";
 import {
   apiRoot,
@@ -34,6 +37,18 @@ vi.mock("../components/CodeEditor", () => ({
 }));
 
 let api;
+let authClient;
+function workspaceView(workspaceId = WORKSPACE_ID) {
+  return (
+    <MemoryRouter>
+      <AuthContext.Provider
+        value={{ user: { id: 1, username: "tester" }, client: authClient }}
+      >
+        <WorkspacePage key={workspaceId} workspaceId={workspaceId} />
+      </AuthContext.Provider>
+    </MemoryRouter>
+  );
+}
 const click = (name, role = "button") =>
   fireEvent.click(
     screen.getByRole(role, {
@@ -49,7 +64,7 @@ const output = () => screen.getByTestId("terminal-screen");
 const mutations = () => api.requests.filter((r) => r.method !== "GET");
 const treeRow = (name) => document.querySelector(`.tree-row[title="${name}"]`);
 async function mount() {
-  const result = render(<WorkspacePage />);
+  const result = render(workspaceView());
   await screen.findByRole("button", { name: "Select workspace root" });
   await waitFor(() => expect(treeRow("main.py")).toBeInTheDocument());
   return result;
@@ -96,6 +111,11 @@ async function finish(socket, reason = "completed", exit_code = 0) {
 }
 beforeEach(() => {
   api = createApi();
+  authClient = {
+    fetch: (...args) => fetch(...args),
+    getAccessToken: async () => "test-access",
+    logout: vi.fn(),
+  };
   vi.stubGlobal("fetch", api.fetch);
   MockWebSocket.instances = [];
   MockTerminal.instances = [];
@@ -117,7 +137,7 @@ describe("workspace loading and editor drafts", () => {
     api.intercept("GET", apiRoot, () =>
       response({ detail: "Workspace unavailable" }, 503),
     );
-    render(<WorkspacePage />);
+    render(workspaceView());
     expect(
       (await screen.findAllByText(/HTTP 503: Workspace unavailable/)).length,
     ).toBeGreaterThan(0);
@@ -425,7 +445,7 @@ describe("saving and execution lifecycle", () => {
     async (language, source, extension) => {
       api.files[0].name = "main";
       api.files[0].language = "";
-      render(<WorkspacePage />);
+      render(workspaceView());
       await waitFor(() => expect(treeRow("main")).toBeInTheDocument());
       await open("main");
       edit(source);
@@ -445,7 +465,7 @@ describe("saving and execution lifecycle", () => {
   it("ambiguous source asks for a language and cancel prevents rename/save/run", async () => {
     api.files[0].name = "main";
     api.files[0].language = "";
-    render(<WorkspacePage />);
+    render(workspaceView());
     await waitFor(() => expect(treeRow("main")).toBeInTheDocument());
     await open("main");
     edit("x = 1");
@@ -460,7 +480,7 @@ describe("saving and execution lifecycle", () => {
   });
   it("unknown extension and no selection report clear errors", async () => {
     api.files[0].name = "main.unknown";
-    render(<WorkspacePage />);
+    render(workspaceView());
     await waitFor(() => expect(treeRow("main.unknown")).toBeInTheDocument());
     click("Run");
     expect(output()).toHaveTextContent("Select a file");
@@ -556,7 +576,7 @@ it("reports a network failure when loading the workspace", async () => {
   api.intercept("GET", apiRoot, () =>
     Promise.reject(new Error("Network offline")),
   );
-  render(<WorkspacePage />);
+  render(workspaceView());
   expect(
     (await screen.findAllByText("Network offline")).length,
   ).toBeGreaterThan(0);
@@ -565,7 +585,7 @@ it("reports a network failure when loading the workspace", async () => {
 it("accepts an explicit language for ambiguous code before saving and running", async () => {
   api.files[0].name = "main";
   api.files[0].language = "";
-  render(<WorkspacePage />);
+  render(workspaceView());
   await waitFor(() => expect(treeRow("main")).toBeInTheDocument());
   await open("main");
   edit("x = 1");

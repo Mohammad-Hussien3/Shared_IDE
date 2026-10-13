@@ -37,6 +37,7 @@ export class MockWebSocket {
   open() {
     this.readyState = 1;
     this.onopen?.();
+    this.emit({ type: "authenticated" });
   }
   emit(message) {
     this.onmessage?.({ data: JSON.stringify(message) });

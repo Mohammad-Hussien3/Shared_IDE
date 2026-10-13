@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from asgiref.testing import ApplicationCommunicator
 from django.test import SimpleTestCase, TestCase
+from django.contrib.auth import get_user_model
 
 from Shared_IDE.asgi import application
 from workspace.consumers import TerminalConsumer
@@ -68,6 +69,11 @@ class TerminalWebSocketTests(SimpleTestCase):
         patcher = patch.object(TerminalConsumer, "_saved_file", saved_file)
         patcher.start()
         self.addCleanup(patcher.stop)
+        async def authenticate(consumer, token):
+            return SimpleNamespace(id=1), {'sid': 'test-session'}
+        auth_patcher = patch.object(TerminalConsumer, '_authenticate', authenticate)
+        auth_patcher.start()
+        self.addCleanup(auth_patcher.stop)
 
     def communicator(self, workspace_id=None, file_id=None, origin=ORIGIN):
         workspace_id = workspace_id or self.workspace.id
@@ -79,6 +85,8 @@ class TerminalWebSocketTests(SimpleTestCase):
         client = self.communicator(**kwargs)
         response = await client.connect()
         self.assertEqual(response["type"], "websocket.accept")
+        await client.send_json_to({'type': 'authenticate', 'token': 'test-access'})
+        self.assertEqual((await client.receive_json_from())['type'], 'authenticated')
         await client.send_json_to({"type": "start"})
         return client
 
@@ -95,10 +103,10 @@ class TerminalWebSocketTests(SimpleTestCase):
 
     def test_rejects_other_workspace_file_and_unapproved_origin(self):
         async def exercise():
-            client = await self.connect_and_start(workspace_id=self.other_workspace.id)
-            messages = await self.collect_until(client)
-            self.assertEqual(messages[0]["type"], "error")
-            self.assertIn("not found", messages[0]["message"])
+            client = self.communicator(workspace_id=self.other_workspace.id)
+            await client.connect()
+            await client.send_json_to({'type': 'authenticate', 'token': 'test-access'})
+            self.assertEqual((await client.app.receive_output())['code'], 4404)
             await self.close_client(client)
 
             rejected = self.communicator(origin=[(b"origin", b"http://untrusted.example")])
@@ -233,8 +241,9 @@ class TerminalWebSocketTests(SimpleTestCase):
 
 class TerminalSavedFileTests(TestCase):
     def test_websocket_loads_only_saved_file_in_requested_workspace(self):
-        workspace = Workspace.objects.create(name="one")
-        other_workspace = Workspace.objects.create(name="two")
+        user = get_user_model().objects.create_user(username='owner')
+        workspace = Workspace.objects.create(name="one", owner=user)
+        other_workspace = Workspace.objects.create(name="two", owner=user)
         file = File.objects.create(
             workspace=workspace,
             name="main.py",
@@ -242,6 +251,7 @@ class TerminalSavedFileTests(TestCase):
             content='print("saved source")',
         )
         consumer = TerminalConsumer()
+        consumer.user = user
         consumer.scope = {"url_route": {"kwargs": {
             "workspace_id": str(workspace.id), "file_id": str(file.id)
         }}}

@@ -1,4 +1,5 @@
 from django.urls import reverse
+from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 from workspace.models import File, Folder, Workspace
 from .helpers import ResourceAPIMixin
@@ -50,6 +51,10 @@ class ResourceAPITests(ResourceAPIMixin, APITestCase):
 
 
 class WorkspaceAPITests(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username='owner')
+        self.client.force_authenticate(self.user)
+
     def test_create_list_and_retrieve_workspace(self):
         url = reverse('workspace-list-create')
         response = self.client.post(url, {'name': 'project'}, format='json')
@@ -66,11 +71,12 @@ class WorkspaceAPITests(APITestCase):
         for name in ['', '  ', 'x' * 101]:
             self.assertEqual(self.client.post(url, {'name': name}, format='json').status_code, 400)
 
-    def test_unknown_workspace_and_unsupported_detail_operations(self):
+    def test_unknown_workspace_and_detail_operations(self):
         import uuid
         missing = reverse('workspace-detail', kwargs={'pk': uuid.uuid4()})
         self.assertEqual(self.client.get(missing).status_code, 404)
-        workspace = Workspace.objects.create()
+        workspace = Workspace.objects.create(owner=self.user)
         url = reverse('workspace-detail', kwargs={'pk': workspace.pk})
-        for method in [self.client.patch, self.client.put, self.client.delete]:
-            self.assertEqual(method(url, {}, format='json').status_code, 405)
+        self.assertEqual(self.client.patch(url, {'name': 'renamed'}, format='json').status_code, 200)
+        self.assertEqual(self.client.put(url, {'name': 'replaced'}, format='json').status_code, 200)
+        self.assertEqual(self.client.delete(url).status_code, 204)
