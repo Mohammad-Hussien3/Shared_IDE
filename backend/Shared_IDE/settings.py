@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -62,25 +63,52 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'workspace',
+    'accounts',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv(
+    'FRONTEND_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173'
+).split(',') if origin.strip()]
+CORS_ALLOW_CREDENTIALS = True
+# Exact browser origins, including the Vite port; no wildcard trust.
+# Trusting an origin does not override the browser's SameSite cookie rules.
+CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+CSRF_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SECURE = os.getenv('AUTH_COOKIE_SECURE', str(not DEBUG)).lower() == 'true'
+AUTH_COOKIE_SAMESITE = os.getenv('AUTH_COOKIE_SAMESITE', 'Lax')
+AUTH_REFRESH_COOKIE = 'ide_refresh'
+AUTH_REFRESH_COOKIE_PATH = '/api/auth/'
+CSRF_COOKIE_SECURE = AUTH_COOKIE_SECURE
+CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
+SESSION_COOKIE_SECURE = AUTH_COOKIE_SECURE
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': ['accounts.authentication.SessionJWTAuthentication'],
+    'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
+    'DEFAULT_THROTTLE_RATES': {'auth': '30/minute'},
+}
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'CHECK_REVOKE_TOKEN': True,
+    'SIGNING_KEY': os.getenv('JWT_SIGNING_KEY', SECRET_KEY),
+}
 
 
 ROOT_URLCONF = 'Shared_IDE.urls'
