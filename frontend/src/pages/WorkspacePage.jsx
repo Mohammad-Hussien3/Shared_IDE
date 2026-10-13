@@ -12,6 +12,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth/context";
 import AccountControls from "../components/AccountControls";
 import { API_BASE_URL, WS_BASE_URL, responseData } from "../lib/api";
+import { ERROR_MESSAGES, getErrorMessage, getTerminalErrorMessage, HttpError, UserFacingError } from "../lib/errors";
 import {
   AlertCircle,
   ArrowRight,
@@ -226,7 +227,7 @@ export default function WorkspacePage({ workspaceId }) {
       })
       .catch(
         (err) =>
-          !cancelled && setError(err.message || "Could not load workspace."),
+          !cancelled && setError(getErrorMessage(err)),
       )
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -267,7 +268,7 @@ export default function WorkspacePage({ workspaceId }) {
         }
       } catch (err) {
         if (requestId === fileRequestId.current)
-          setFileError(err.message || "Could not load file content.");
+          setFileError(getErrorMessage(err));
       } finally {
         if (requestId === fileRequestId.current) setLoadingFile(false);
       }
@@ -366,7 +367,7 @@ export default function WorkspacePage({ workspaceId }) {
         setActionMessage("File created");
       }
     } catch (err) {
-      setActionMessage(err.message || `Could not create ${type}.`);
+      setActionMessage(getErrorMessage(err));
       setActionError(true);
       throw err;
     } finally {
@@ -422,7 +423,7 @@ export default function WorkspacePage({ workspaceId }) {
       if (activeFileRef.current?.id === fileId) {
         markDirty(fileId, true);
         setSaveStatus("Unsaved");
-        setSaveError(`Save failed: ${err.message}`);
+        setSaveError(getErrorMessage(err, "save"));
       }
     } finally {
       saveInProgressRef.current = false;
@@ -611,6 +612,7 @@ export default function WorkspacePage({ workspaceId }) {
         } catch {
           return;
         }
+        if (!message || typeof message !== "object") return;
         if (message.type === "authenticated") {
           startProgram();
         } else if (message.type === "ready") {
@@ -626,20 +628,23 @@ export default function WorkspacePage({ workspaceId }) {
             pendingInputRef.current = "";
           }
         } else if (message.type === "output") {
-          writeTerminal(message.data || "");
+          if (typeof message.data === "string") writeTerminal(message.data);
         } else if (message.type === "error") {
+          const friendlyMessage = getTerminalErrorMessage(message.message);
           setExecutionProblems((current) => [
             ...current,
             {
               fileId,
               filename,
-              message: message.message || "Execution failed.",
+              message: friendlyMessage,
             },
           ]);
           writeTerminal(
-            `\r\n\x1b[31m${message.message || "Execution failed."}\x1b[0m\r\n`,
+            `\r\n\x1b[31m${friendlyMessage}\x1b[0m\r\n`,
           );
         } else if (message.type === "finished") {
+          // Only numeric process exit codes belong in the terminal UI.
+          if (message.reason === "completed" && !Number.isInteger(message.exit_code)) return;
           finished = true;
           terminalReadyRef.current = false;
           if (message.reason === "completed" && message.exit_code !== 0) {
@@ -663,7 +668,7 @@ export default function WorkspacePage({ workspaceId }) {
       };
       socket.onerror = () => {
         if (!finished)
-          writeTerminal("\r\n\x1b[31mTerminal connection failed.\x1b[0m\r\n");
+          writeTerminal(`\r\n\x1b[31m${ERROR_MESSAGES.terminal}\x1b[0m\r\n`);
       };
       socket.onclose = (event) => {
         if (event?.code === 4401 && mountedRef.current)
@@ -675,7 +680,10 @@ export default function WorkspacePage({ workspaceId }) {
         }
         if (!finished)
           reject(
-            new Error("Terminal connection closed before execution finished."),
+            event?.code === 4401 ? new HttpError(401)
+              : event?.code === 4403 ? new HttpError(403)
+                : event?.code === 4404 ? new HttpError(404)
+                  : new UserFacingError(ERROR_MESSAGES.terminal),
           );
       };
     });
@@ -718,15 +726,15 @@ export default function WorkspacePage({ workspaceId }) {
       if (filenameHasExtension) {
         language = languageFromFilename(activeFile.name);
         if (!language) {
-          throw new Error(
-            `The .${activeFile.name.split(".").at(-1)} extension is not recognized. Rename the file with a supported extension before running it.`,
+          throw new UserFacingError(
+            "This file extension is not recognized. Rename the file with a supported extension before running it.",
           );
         }
       } else {
         language =
           detectLanguageFromContent(fileContent) || (await chooseLanguage());
         if (!language) {
-          throw new Error(
+          throw new UserFacingError(
             "Choose python, c, or cpp to run this file. It was not renamed.",
           );
         }
@@ -765,7 +773,7 @@ export default function WorkspacePage({ workspaceId }) {
             "The file changed while saving. Run again to save and execute the latest edits.",
           );
         }
-        throw new Error(
+        throw new UserFacingError(
           "The file changed while saving. Run again to save and execute the latest edits.",
         );
       }
@@ -795,6 +803,7 @@ export default function WorkspacePage({ workspaceId }) {
       writeTerminal("Running in an isolated container…\r\n");
       await executeSavedFile(runFileRecord.id, getFileName(runFileRecord));
     } catch (err) {
+      const friendlyMessage = getErrorMessage(err, saveAttempted && !saveConfirmed ? "save" : "execution");
       if (
         saveAttempted &&
         !saveConfirmed &&
@@ -802,17 +811,17 @@ export default function WorkspacePage({ workspaceId }) {
       ) {
         markDirty(fileId, true);
         setSaveStatus("Unsaved");
-        setSaveError(`Save failed: ${err.message}`);
+        setSaveError(friendlyMessage);
       }
       setExecutionProblems([
         {
           fileId,
           filename: getFileName(activeFile),
-          message: err.message || "Code execution failed.",
+          message: friendlyMessage,
         },
       ]);
       writeTerminal(
-        `\r\n\x1b[31m${err.message || "Code execution failed."}\x1b[0m\r\n`,
+        `\r\n\x1b[31m${friendlyMessage}\x1b[0m\r\n`,
       );
     } finally {
       runInProgressRef.current = false;
@@ -860,7 +869,7 @@ export default function WorkspacePage({ workspaceId }) {
       await refreshWorkspaceTree();
       setError("");
     } catch (err) {
-      setActionMessage(err.message);
+      setActionMessage(getErrorMessage(err));
       setActionError(true);
     }
   };

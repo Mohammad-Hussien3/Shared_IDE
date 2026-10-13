@@ -19,7 +19,15 @@ A frontend on `localhost` calling an API on `127.0.0.1` cannot use the default `
 
 Django's `FRONTEND_ORIGINS` defaults to `http://localhost:5173,http://127.0.0.1:5173` for both CORS and CSRF origin checking. Add an exact origin if you use a custom frontend port. For local HTTP use `AUTH_COOKIE_SECURE=false`; production HTTPS defaults remain secure. CSRF protection, HttpOnly cookies, and `SameSite=Lax` stay enabled.
 
-The API client fetches `/api/auth/csrf/` with credentials and caching disabled before cookie-authenticated requests. Registration, login, refresh, and logout send credentials and `X-CSRFToken`. A stale token is refreshed once after an explicit CSRF rejection; persistent failures are shown, with Django's reason included only in debug mode. Production needs its own `/api` reverse proxy or a correctly configured absolute API URL; Vite's development proxy is not part of the production build.
+The API client fetches `/api/auth/csrf/` with credentials and caching disabled before cookie-authenticated requests. Registration, login, refresh, and logout send credentials and `X-CSRFToken`. A stale token is refreshed once after an explicit CSRF rejection; persistent failures show a friendly refresh prompt. CSRF protection and the same-origin development proxy are independent of error message formatting. Production needs its own `/api` reverse proxy or a correctly configured absolute API URL; Vite's development proxy is not part of the production build.
+
+## Error handling
+
+`src/lib/errors.js` centralizes user-facing error messages. HTTP status and the CSRF retry code remain available to the client, while authentication, workspace dialogs, file operations, saves, and terminal service errors use the existing themed inline displays. Recognized backend validation messages become specific guidance; unknown validation text, server tracebacks, paths, and configuration details are not echoed. Add new safe validation templates there when adding API validation rules.
+
+Use `getErrorMessage(error)` in UI catch handlers and `getTerminalErrorMessage(message)` for WebSocket service errors. `UserFacingError` is reserved for local, developer-authored instructions and must never wrap server text. Program stdout/stderr and compiler diagnostics remain visible as program output.
+
+Development DevTools receive `[IDE error]` records containing the operation, numeric status, recognized error code, error type, and known validation field names. Bodies, credentials, tokens, headers, source code, URLs, and raw exception messages are excluded; these logs are disabled in production builds.
 
 ## Interface
 

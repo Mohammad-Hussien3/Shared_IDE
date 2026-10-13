@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAuthClient } from "./api";
+import { ERROR_MESSAGES, HttpError } from "./errors";
 import { deferred, response } from "../test/workspaceFixtures";
 
 const token = (suffix = "one", exp = Date.now() / 1000 + 300) =>
@@ -94,7 +95,7 @@ describe("authentication HTTP client", () => {
     const client = createAuthClient();
     const changed = vi.fn();
     client.subscribe(changed);
-    await expect(client.authenticate("register", {})).rejects.toThrow("HTTP 403: CSRF cookie not set");
+    await expect(client.authenticate("register", {})).rejects.toMatchObject({ status: 403, code: "csrf_failed", message: ERROR_MESSAGES.csrf });
     expect(fetch).toHaveBeenCalledTimes(4);
     expect(changed).not.toHaveBeenCalled();
   });
@@ -103,13 +104,13 @@ describe("authentication HTTP client", () => {
     fetch
       .mockResolvedValueOnce(response({ csrf: "csrf" }))
       .mockResolvedValueOnce(response({ detail: "Denied" }, status));
-    await expect(createAuthClient().authenticate("register", {})).rejects.toThrow(`HTTP ${status}: Denied`);
+    await expect(createAuthClient().authenticate("register", {})).rejects.toMatchObject({ status, message: status === 403 ? ERROR_MESSAGES.permission : ERROR_MESSAGES.server });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it.each([null, "", undefined])("does not submit credentials when CSRF bootstrap returns %s", async (csrf) => {
     fetch.mockResolvedValueOnce(response({ csrf }));
-    await expect(createAuthClient().authenticate("login", {})).rejects.toThrow("Could not obtain a CSRF token");
+    await expect(createAuthClient().authenticate("login", {})).rejects.toThrow(ERROR_MESSAGES.csrf);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -147,7 +148,7 @@ describe("authentication HTTP client", () => {
       .mockResolvedValueOnce(response({}, 204));
     const client = createAuthClient();
     await client.restore();
-    await expect(client.logout()).rejects.toThrow("CSRF verification failed");
+    await expect(client.logout()).rejects.toThrow(ERROR_MESSAGES.csrf);
     await client.logout();
     expect(fetch.mock.calls[4][1].headers["X-CSRFToken"]).toBe("new-csrf");
   });
@@ -233,8 +234,8 @@ describe("authentication HTTP client", () => {
     await client.restore();
     await expect(
       client.fetch("/resource", { method: "PATCH", body: "{}" }),
-    ).rejects.toThrow("Session expired");
-    expect(change).toHaveBeenLastCalledWith(null);
+    ).rejects.toThrow(ERROR_MESSAGES.session);
+    expect(change).toHaveBeenLastCalledWith(null, expect.any(HttpError));
     expect(
       fetch.mock.calls.filter(([url]) => url === "/resource"),
     ).toHaveLength(1);
@@ -271,7 +272,7 @@ describe("authentication HTTP client", () => {
     const change = vi.fn();
     client.subscribe(change);
     await client.restore();
-    await expect(client.logout()).rejects.toThrow("Offline");
+    await expect(client.logout()).rejects.toThrow(ERROR_MESSAGES.server);
     expect(change).not.toHaveBeenCalledWith(null);
   });
 });

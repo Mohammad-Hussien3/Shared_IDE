@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getErrorMessage } from "../lib/errors";
 import {
   Braces,
   Check,
@@ -141,7 +142,7 @@ export function ResourceDialog({ dialog, onClose }) {
       await dialog.onSubmit(value.trim());
       onClose();
     } catch (err) {
-      setError(err.message || "Something went wrong. Please try again.");
+      setError(getErrorMessage(err));
     } finally {
       setPending(false);
     }

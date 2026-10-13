@@ -13,6 +13,7 @@ import { useAuth } from "../auth/context";
 import AccountControls, { ThemeButton } from "../components/AccountControls";
 import { IconButton, ResourceDialog } from "../components/IdePrimitives";
 import { API_BASE_URL, responseData } from "../lib/api";
+import { getErrorMessage } from "../lib/errors";
 
 export default function WorkspaceDashboard() {
   const { client, user } = useAuth();
@@ -31,7 +32,7 @@ export default function WorkspaceDashboard() {
           if (!signal?.aborted) setWorkspaces(items);
         })
         .catch((err) => {
-          if (!signal?.aborted) setError(err.message);
+          if (!signal?.aborted) setError(getErrorMessage(err));
         })
         .finally(() => {
           if (!signal?.aborted) setLoading(false);

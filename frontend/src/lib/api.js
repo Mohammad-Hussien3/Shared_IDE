@@ -1,3 +1,5 @@
+import { ERROR_MESSAGES, HttpError, UserFacingError } from "./errors";
+
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || "/api").replace(
   /\/$/,
   "",
@@ -7,20 +9,17 @@ export const WS_BASE_URL = new URL(
   window.location.origin,
 ).href.replace(/^http/, "ws");
 
-export async function responseData(response) {
-  const data =
-    response.status === 204 ? {} : await response.json().catch(() => ({}));
+export async function responseData(response, context = "general") {
+  if (response.status === 204) return {};
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    // HTML error pages and malformed success responses are not application data.
+    throw new HttpError(response.status, undefined, context);
+  }
   if (!response.ok) {
-    const message =
-      data.detail ||
-      Object.values(data).flat().join(" ") ||
-      response.statusText;
-    const error = new Error(
-      `HTTP ${response.status}${message ? `: ${message}` : ""}`,
-    );
-    error.status = response.status;
-    error.code = data.code;
-    throw error;
+    throw new HttpError(response.status, data, context);
   }
   return data;
 }
@@ -46,7 +45,7 @@ export function createAuthClient() {
         .then(responseData)
         .then((data) => {
           if (typeof data.csrf !== "string" || !data.csrf) {
-            throw new Error("Could not obtain a CSRF token. Reload and try again.");
+            throw new UserFacingError(ERROR_MESSAGES.csrf);
           }
           return (csrf = data.csrf);
         })
@@ -68,6 +67,7 @@ export function createAuthClient() {
         },
         body: JSON.stringify(body),
       }),
+      action,
     );
     try {
       return await send();
@@ -106,7 +106,7 @@ export function createAuthClient() {
           ) {
             access = null;
             csrf = null;
-            changed(null);
+            changed(null, error);
           }
           throw error;
         })
@@ -188,7 +188,7 @@ export function createAuthClient() {
         result = await request(renewed);
         if (result.status === 401) {
           access = null;
-          changed(null);
+          changed(null, new HttpError(401));
         }
       }
       if (version !== generation)

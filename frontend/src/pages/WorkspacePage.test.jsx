@@ -133,13 +133,13 @@ describe("workspace loading and editor drafts", () => {
       screen.queryByRole("textbox", { name: "Code editor" }),
     ).not.toBeInTheDocument();
   });
-  it("shows an HTTP error and can retry workspace loading", async () => {
+  it("shows a friendly service error and can retry workspace loading", async () => {
     api.intercept("GET", apiRoot, () =>
       response({ detail: "Workspace unavailable" }, 503),
     );
     render(workspaceView());
     expect(
-      (await screen.findAllByText(/HTTP 503: Workspace unavailable/)).length,
+      (await screen.findAllByText("The service is temporarily unavailable. Please try again shortly.")).length,
     ).toBeGreaterThan(0);
     click("Try again");
     await waitFor(() => expect(treeRow("main.py")).toBeInTheDocument());
@@ -154,7 +154,7 @@ describe("workspace loading and editor drafts", () => {
       gate.resolve(response({ detail: "File not found" }, 404)),
     );
     expect(
-      await screen.findByText("HTTP 404: File not found"),
+      await screen.findByText("This item is no longer available. Refresh and try again."),
     ).toBeInTheDocument();
     expect(editor()).toHaveAttribute("readonly");
     expect(
@@ -264,7 +264,7 @@ describe("file and folder operations", () => {
     expect(api.files[1].folder).toBe(FOLDER_ID);
   });
   it.each(["New File", "New Folder"])(
-    "shows creation HTTP errors for %s and preserves dialog input",
+    "shows creation validation errors for %s and preserves dialog input",
     async (action) => {
       await mount();
       const kind = action === "New File" ? "files" : "folders";
@@ -280,7 +280,7 @@ describe("file and folder operations", () => {
         within(dialog).getByRole("button", { name: "Create", exact: true }),
       );
       expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-        "HTTP 400: Name already exists",
+        "Name already exists. Choose another name.",
       );
       expect(within(dialog).getByRole("textbox")).toHaveValue("duplicate");
     },
@@ -302,7 +302,7 @@ describe("file and folder operations", () => {
       within(dialog).getByRole("button", { name: "Rename", exact: true }),
     );
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "HTTP 500: Update failed",
+      "The service is temporarily unavailable. Please try again shortly.",
     );
     expect(treeRow("main.py")).toBeInTheDocument();
   });
@@ -330,7 +330,7 @@ describe("file and folder operations", () => {
     await contextAction("main.py", "Delete");
     click("Delete");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "HTTP 500: Delete failed",
+      "The service is temporarily unavailable. Please try again shortly.",
     );
     expect(treeRow("main.py")).toBeInTheDocument();
     expect(editor()).toHaveValue('print("saved")');
@@ -366,7 +366,7 @@ describe("saving and execution lifecycle", () => {
     expect(editor()).toHaveValue("newer draft");
     expect(status()).toHaveTextContent("Unsaved");
   });
-  it("failed manual Save keeps the draft and exposes the HTTP error", async () => {
+  it("failed manual Save keeps the draft and shows a friendly error", async () => {
     await mount();
     await open();
     edit("draft");
@@ -375,7 +375,7 @@ describe("saving and execution lifecycle", () => {
     );
     click("Save");
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "HTTP 503: Offline",
+      "The service is temporarily unavailable. Please try again shortly.",
     );
     expect(status()).toHaveTextContent("Unsaved");
     expect(editor()).toHaveValue("draft");
@@ -415,7 +415,7 @@ describe("saving and execution lifecycle", () => {
     );
     click("Run");
     await waitFor(() =>
-      expect(output()).toHaveTextContent("HTTP 500: Save failed"),
+      expect(output()).toHaveTextContent("The service is temporarily unavailable. Please try again shortly."),
     );
     expect(MockWebSocket.instances).toHaveLength(0);
     expect(status()).toHaveTextContent("Unsaved");
@@ -525,7 +525,7 @@ describe("saving and execution lifecycle", () => {
   it.each([
     ["completed", 1, "Exited with code 1"],
     ["timeout", null, "Timed out"],
-    ["error", null, "image missing"],
+    ["error", null, "Code execution is temporarily unavailable. Please try again later."],
   ])("handles execution %s", async (reason, code, text) => {
     await mount();
     await open();
@@ -550,10 +550,10 @@ describe("saving and execution lifecycle", () => {
     });
     await waitFor(() =>
       expect(output()).toHaveTextContent(
-        "connection closed before execution finished",
+        "The terminal disconnected. Run your file again to reconnect.",
       ),
     );
-    expect(output()).toHaveTextContent("Terminal connection failed");
+    expect(output()).toHaveTextContent("The terminal disconnected. Run your file again to reconnect.");
     MockWebSocket.instances = [];
     const next = await startRun();
     view.unmount();
@@ -578,8 +578,67 @@ it("reports a network failure when loading the workspace", async () => {
   );
   render(workspaceView());
   expect(
-    (await screen.findAllByText("Network offline")).length,
+    (await screen.findAllByText("Could not connect. Check your internet connection and try again.")).length,
   ).toBeGreaterThan(0);
+});
+
+it.each([
+  [403, "You don't have permission to do that."],
+  [404, "This item is no longer available. Refresh and try again."],
+  [500, "The service is temporarily unavailable. Please try again shortly."],
+  [0, "Could not connect. Check your internet connection and try again."],
+])("keeps edits unsaved and prevents Run after save failure %s", async (code, message) => {
+  await mount();
+  await open();
+  edit("private draft");
+  api.intercept("PATCH", fileUrl(), () => code
+    ? response({ detail: "HTTP error Traceback /srv/private.py Authorization: Bearer secret" }, code)
+    : Promise.reject(new TypeError("Failed to fetch")));
+  click("Run");
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(output()).toHaveTextContent(message);
+  expect(output()).not.toHaveTextContent(/HTTP|Traceback|private\.py|Bearer|secret/);
+  expect(status()).toHaveTextContent("Unsaved");
+  expect(editor()).toHaveValue("private draft");
+  expect(MockWebSocket.instances).toHaveLength(0);
+});
+
+it("hides terminal service internals in all panels but preserves program diagnostics", async () => {
+  await mount();
+  await open();
+  const socket = await startRun();
+  const programError = 'Traceback (most recent call last): File "main.py", line 1\nZeroDivisionError: division by zero';
+  act(() => {
+    socket.emit({ type: "output", data: programError });
+    socket.emit({ type: "error", message: "Isolated runner unavailable: podman /srv/runner.py SECRET=private" });
+  });
+  expect(output()).toHaveTextContent("ZeroDivisionError: division by zero");
+  expect(output()).toHaveTextContent("Code execution is temporarily unavailable. Please try again later.");
+  click("Output", "tab");
+  const outputPanel = screen.getByRole("tabpanel", { name: "Output", exact: true });
+  expect(outputPanel).toHaveTextContent("ZeroDivisionError");
+  expect(outputPanel).not.toHaveTextContent(/podman|runner\.py|SECRET/);
+  click(/Problems/, "tab");
+  const problems = screen.getByRole("tabpanel", { name: "Problems" });
+  expect(problems).toHaveTextContent("Code execution is temporarily unavailable. Please try again later.");
+  expect(problems).not.toHaveTextContent(/podman|runner\.py|SECRET/);
+  await finish(socket, "error", null);
+});
+
+it.each([
+  [4401, "Your session has expired. Please log in again."],
+  [4403, "You don't have permission to do that."],
+  [4404, "This item is no longer available. Refresh and try again."],
+  [1006, "The terminal disconnected. Run your file again to reconnect."],
+])("shows a friendly terminal close message for %s", async (code, message) => {
+  authClient.restore = vi.fn().mockResolvedValue(undefined);
+  await mount();
+  await open();
+  const socket = await startRun();
+  await act(async () => socket.onclose({ code, reason: "SECRET /srv/internal.py" }));
+  expect(output()).toHaveTextContent(message);
+  expect(output()).not.toHaveTextContent(/SECRET|internal\.py/);
+  if (code === 4401) expect(authClient.restore).toHaveBeenCalledOnce();
 });
 
 it("accepts an explicit language for ambiguous code before saving and running", async () => {

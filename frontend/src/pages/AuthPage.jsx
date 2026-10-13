@@ -4,6 +4,7 @@ import { Link, Navigate } from "react-router-dom";
 import { Code2, LoaderCircle } from "lucide-react";
 import { useAuth } from "../auth/context";
 import { ThemeButton } from "../components/AccountControls";
+import { getErrorMessage } from "../lib/errors";
 
 export default function AuthPage({ register = false }) {
   const {
@@ -36,7 +37,7 @@ export default function AuthPage({ register = false }) {
         ...(register ? { confirm_password: confirmation } : {}),
       });
     } catch (err) {
-      setError(err.message);
+      setError(getErrorMessage(err, register ? "register" : "login"));
     } finally {
       setPending(false);
     }

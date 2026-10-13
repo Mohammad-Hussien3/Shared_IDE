@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LogOut, Moon, Sun } from "lucide-react";
 import { useAuth } from "../auth/context";
+import { getErrorMessage } from "../lib/errors";
 
 export function ThemeButton({ theme, onClick }) {
   const Icon = theme === "dark" ? Sun : Moon;
@@ -22,7 +23,7 @@ export default function AccountControls() {
     try {
       await client.logout();
     } catch (err) {
-      setError(`Logout failed: ${err.message}`);
+      setError(getErrorMessage(err, "logout"));
     } finally {
       setPending(false);
     }

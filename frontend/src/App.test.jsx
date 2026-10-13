@@ -141,7 +141,7 @@ it("shows login errors and supports login followed by confirmed logout", async (
   fill("Password", "wrong");
   click("Log in");
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Invalid credentials",
+    "Invalid username or password. Please try again.",
   );
   failedAuth = false;
   click("Log in");
@@ -254,6 +254,7 @@ it("redirects to login on an expired session and clears the editor", async () =>
   expired = true;
   fireEvent.click(treeRow());
   await screen.findByRole("heading", { name: "Welcome back" });
+  expect(screen.getByRole("alert")).toHaveTextContent("Your session has expired. Please log in again.");
   expect(
     screen.queryByRole("textbox", { name: "Code editor" }),
   ).not.toBeInTheDocument();
@@ -269,10 +270,63 @@ it("shows dashboard load errors and supports retry and theme persistence", async
       : original(url, options),
   );
   mount();
-  expect(await screen.findByRole("alert")).toHaveTextContent("Unavailable");
+  expect(await screen.findByRole("alert")).toHaveTextContent("The service is temporarily unavailable. Please try again shortly.");
   fail = false;
   click("Try again");
   await screen.findByRole("link", { name: "Project one" });
   click("Toggle theme");
   expect(localStorage.getItem("ide-theme")).toBe("light");
+});
+
+it.each([
+  ["register", 400, { username: ["A user with that username already exists."] }, "Username already exists. Choose another username."],
+  ["register", 400, { password: ["This password is too common."] }, "This password is too common. Choose a stronger password."],
+  ["login", 401, { detail: "Invalid credentials" }, "Invalid username or password. Please try again."],
+  ["register", 403, { code: "csrf_failed", detail: "CSRF verification failed. SECRET=private" }, "We couldn't verify this request. Refresh the page and try again."],
+  ["login", 429, { detail: "Throttle backend internals" }, "Too many attempts. Please wait a moment and try again."],
+  ["register", 500, { detail: "Traceback /srv/settings.py SECRET=private" }, "The service is temporarily unavailable. Please try again shortly."],
+  ["login", 0, null, "Could not connect. Check your internet connection and try again."],
+])("shows friendly %s errors for status %s", async (action, status, payload, message) => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, options) => {
+    if (url.endsWith(`/auth/${action}/`)) {
+      return status ? Promise.resolve(response(payload, status)) : Promise.reject(new TypeError("Failed to fetch"));
+    }
+    return original(url, options);
+  });
+  mount(`/${action}`);
+  await screen.findByLabelText("Username", { exact: true });
+  fill("Username", "alice");
+  fill("Password", "Secure-password!79");
+  if (action === "register") fill("Confirm password", "Secure-password!79");
+  click(action === "register" ? "Create account" : "Log in");
+  expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  expect(screen.getByRole("alert")).not.toHaveTextContent(/HTTP|CSRF|Traceback|SECRET|settings\.py|Throttle/);
+  expect(screen.queryByRole("heading", { name: "Your workspaces" })).not.toBeInTheDocument();
+});
+
+it("keeps the account signed in and explains a failed logout", async () => {
+  signedIn = true;
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, options) => url.endsWith("/auth/logout/")
+    ? Promise.resolve(response({ detail: "Traceback /srv/logout.py" }, 500)) : original(url, options));
+  mount();
+  await screen.findByRole("heading", { name: "Your workspaces" });
+  click("Log out");
+  expect(await screen.findByRole("alert")).toHaveTextContent("The service is temporarily unavailable. Please try again shortly.");
+  expect(screen.getByRole("heading", { name: "Your workspaces" })).toBeInTheDocument();
+});
+
+it("shows workspace permission errors inside the existing creation dialog", async () => {
+  signedIn = true;
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, options) => url.endsWith("/workspaces/") && options?.method === "POST"
+    ? Promise.resolve(response({ detail: "PermissionDenied in /srv/private.py" }, 403)) : original(url, options));
+  mount();
+  await screen.findByRole("heading", { name: "Your workspaces" });
+  click("New workspace");
+  fill("Workspace name", "New project");
+  click("Create");
+  expect(await screen.findByRole("alert")).toHaveTextContent("You don't have permission to do that.");
+  expect(screen.getByLabelText("Workspace name")).toHaveValue("New project");
 });

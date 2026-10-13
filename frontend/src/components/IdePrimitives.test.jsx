@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { ResourceDialog, ResizeHandle, SaveIndicator } from "./IdePrimitives";
 import { deferred } from "../test/workspaceFixtures";
+import { HttpError } from "../lib/errors";
 
 it("dialog trims input, blocks duplicate submissions and closes after success", async () => {
   const user = userEvent.setup();
@@ -36,14 +37,14 @@ it("dialog reports a rejected operation and remains available for retry/cancel",
       dialog={{
         title: "Rename",
         value: "file",
-        onSubmit: vi.fn().mockRejectedValue(new Error("HTTP 400: invalid")),
+        onSubmit: vi.fn().mockRejectedValue(new HttpError(400, { name: ["This field may not be blank."] })),
       }}
       onClose={onClose}
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "HTTP 400: invalid",
+    "Name is required.",
   );
   expect(onClose).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
