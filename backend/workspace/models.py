@@ -1,8 +1,15 @@
 import uuid
+from django.conf import settings
 from django.db import models
 
 
 class Workspace(models.Model):
+    # NULL is reserved for quarantined pre-authentication records. The API
+    # always assigns an owner; only the explicit admin command claims legacy data.
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name="workspaces", null=True, blank=True,
+    )
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,

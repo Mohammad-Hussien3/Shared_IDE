@@ -4,6 +4,11 @@ import logging
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from django.core.exceptions import ValidationError
+from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.exceptions import TokenError
+
+from accounts.authentication import authenticate_access_token
 
 from .execution import SUPPORTED_RUNNERS, detect_language
 from .interactive_runner import INTERACTIVE_TIMEOUT_SECONDS, InteractiveRunner
@@ -12,6 +17,8 @@ from .runner import RunnerUnavailable
 
 
 logger = logging.getLogger(__name__)
+AUTH_TIMEOUT_SECONDS = 5
+SESSION_CHECK_SECONDS = 1
 
 
 class TerminalConsumer(AsyncJsonWebsocketConsumer):
@@ -24,14 +31,81 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
         self.ready = False
         self.disconnected = False
         self.stop_requested = False
+        self.user = None
+        self.access_token = None
+        self.auth_task = None
+        self.denied = False
         await self.accept()
+        self.auth_task = asyncio.create_task(self._authentication_deadline())
+
+    async def _authentication_deadline(self):
+        await asyncio.sleep(AUTH_TIMEOUT_SECONDS)
+        if self.user is None:
+            self.denied = True
+            await self.close(code=4401)
+
+    @database_sync_to_async
+    def _authenticate(self, token):
+        return authenticate_access_token(token)
+
+    async def _check_access(self):
+        try:
+            await self._authenticate(self.access_token)
+            return await self._saved_file() is not None
+        except (AuthenticationFailed, TokenError, ValueError, ValidationError):
+            return False
+        except Exception:
+            logger.exception('Could not verify terminal access')
+            return False
+
+    async def _reject(self, code):
+        self.denied = True
+        if self.auth_task:
+            self.auth_task.cancel()
+        await self.close(code=code)
+
+    async def _watch_session(self):
+        while not self.disconnected:
+            await asyncio.sleep(SESSION_CHECK_SECONDS)
+            if not await self._check_access():
+                await self._send({'type': 'error', 'message': 'Session expired or access revoked. Please log in again.'})
+                await self.disconnect(4401)
+                await self.close(code=4401)
+                return
 
     async def receive_json(self, content, **kwargs):
+        if self.denied:
+            return
+        if self.user is None:
+            if not isinstance(content, dict) or content.get('type') != 'authenticate':
+                await self._reject(4401)
+                return
+            token = content.get('token')
+            if not isinstance(token, str) or len(token) > 4096:
+                await self._reject(4401)
+                return
+            try:
+                self.user, _ = await self._authenticate(token)
+                if await self._saved_file() is None:
+                    await self._reject(4404)
+                    return
+            except (AuthenticationFailed, TokenError, ValueError, ValidationError):
+                await self._reject(4401)
+                return
+            self.access_token = token
+            self.auth_task.cancel()
+            self.auth_task = asyncio.create_task(self._watch_session())
+            await self._send({'type': 'authenticated'})
+            return
         if not isinstance(content, dict):
             await self._send({"type": "error", "message": "Invalid terminal message."})
             return
 
         event_type = content.get("type")
+        if not await self._check_access():
+            await self.disconnect(4401)
+            await self.close(code=4401)
+            return
         if event_type == "start":
             if self.started:
                 await self._send({"type": "error", "message": "This terminal session has already started."})
@@ -68,6 +142,9 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         self.disconnected = True
         self.stop_requested = True
+        if self.auth_task is not None and self.auth_task is not asyncio.current_task():
+            self.auth_task.cancel()
+            await asyncio.gather(self.auth_task, return_exceptions=True)
         if self.runner is not None:
             await self.runner.stop()
         if self.run_task is not None and not self.run_task.done():
@@ -79,6 +156,7 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
         return File.objects.filter(
             pk=self.scope["url_route"]["kwargs"]["file_id"],
             workspace_id=self.scope["url_route"]["kwargs"]["workspace_id"],
+            workspace__owner=self.user,
         ).values("name", "content").first()
 
     async def _run_session(self):

@@ -28,12 +28,12 @@ class FolderTreeSerializer(serializers.ModelSerializer):
     def get_children(self, obj):
         children = []
 
-        for file in obj.files.all():
+        for file in obj.files.filter(workspace_id=obj.workspace_id):
             children.append(
                 FileTreeSerializer(file).data
             )
 
-        for folder in obj.children.all():
+        for folder in obj.children.filter(workspace_id=obj.workspace_id):
             children.append(
                 FolderTreeSerializer(folder).data
             )
@@ -64,7 +64,16 @@ class WorkspaceTreeSerializer(serializers.ModelSerializer):
         return children
 
 
-class FolderSerializer(serializers.ModelSerializer):
+class WorkspaceRelationsMixin:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        workspace = self.context.get('workspace')
+        for field in ('parent', 'folder'):
+            if field in self.fields:
+                self.fields[field].queryset = Folder.objects.filter(workspace=workspace)
+
+
+class FolderSerializer(WorkspaceRelationsMixin, serializers.ModelSerializer):
     parent = serializers.PrimaryKeyRelatedField(
         queryset=Folder.objects.all(),
         required=False,
@@ -92,7 +101,7 @@ class FolderSerializer(serializers.ModelSerializer):
         return parent
 
 
-class FileSerializer(serializers.ModelSerializer):
+class FileSerializer(WorkspaceRelationsMixin, serializers.ModelSerializer):
     content = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     folder = serializers.PrimaryKeyRelatedField(
         queryset=Folder.objects.all(),

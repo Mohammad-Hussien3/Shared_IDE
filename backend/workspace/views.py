@@ -1,6 +1,5 @@
 from rest_framework.generics import (
     ListCreateAPIView,
-    RetrieveAPIView,
     RetrieveUpdateDestroyAPIView,
 )
 from rest_framework import status
@@ -20,18 +19,25 @@ from .runner import RunnerUnavailable, run_program
 
 
 class WorkspaceListCreateAPIView(ListCreateAPIView):
-    queryset = Workspace.objects.all()
     serializer_class = WorkspaceTreeSerializer
 
+    def get_queryset(self):
+        return Workspace.objects.filter(owner=self.request.user).order_by('-created_at')
 
-class WorkspaceDetailAPIView(RetrieveAPIView):
-    queryset = Workspace.objects.all()
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+
+class WorkspaceDetailAPIView(RetrieveUpdateDestroyAPIView):
     serializer_class = WorkspaceTreeSerializer
+
+    def get_queryset(self):
+        return Workspace.objects.filter(owner=self.request.user)
 
 
 class WorkspaceScopedMixin:
     def get_workspace(self):
-        return get_object_or_404(Workspace, pk=self.kwargs["workspace_id"])
+        return get_object_or_404(Workspace, pk=self.kwargs["workspace_id"], owner=self.request.user)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
