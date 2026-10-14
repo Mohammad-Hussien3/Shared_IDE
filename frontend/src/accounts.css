@@ -74,6 +74,35 @@
 .auth-card > .button {
   height: 42px;
 }
+@font-face {
+  font-family: "Google Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./assets/google-sans-medium.woff2") format("woff2");
+}
+.google-button {
+  min-height: 40px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid #747775;
+  border-radius: 4px;
+  background: #fff;
+  color: #1f1f1f;
+  font: 500 14px/20px "Google Sans", Arial, sans-serif;
+  cursor: pointer;
+}
+.google-button img { flex-shrink: 0; object-fit: contain; }
+.google-button:hover:not(:disabled) { background: #f8fafd; }
+.google-button:disabled { opacity: .65; cursor: default; }
+.google-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.auth-divider { color: var(--muted); font-size: 12px; text-align: center; }
+.google-link-section { margin-bottom: 24px; }
+.google-link-form { display: grid; gap: 12px; max-width: 400px; margin-top: 12px; }
+.google-link-form p { color: var(--muted); font-size: 13px; }
 .dashboard {
   width: min(1050px, calc(100% - 56px));
   margin: 48px auto;

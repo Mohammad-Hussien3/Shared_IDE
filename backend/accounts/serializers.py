@@ -4,9 +4,15 @@ from rest_framework import serializers
 
 
 class UserSerializer(serializers.ModelSerializer):
+    google_connected = serializers.SerializerMethodField()
+    has_password = serializers.BooleanField(source='has_usable_password', read_only=True)
+
+    def get_google_connected(self, obj):
+        return hasattr(obj, 'google_identity')
+
     class Meta:
         model = get_user_model()
-        fields = ['id', 'username']
+        fields = ['id', 'username', 'google_connected', 'has_password']
         read_only_fields = fields
 
 

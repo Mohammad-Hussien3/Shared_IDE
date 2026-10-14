@@ -18,6 +18,9 @@ import {
   WORKSPACE_ID,
 } from "./test/workspaceFixtures";
 import { MockTerminal } from "./test/terminalMock";
+import { navigateToProvider } from "./lib/navigation";
+
+vi.mock("./lib/navigation", () => ({ navigateToProvider: vi.fn() }));
 
 vi.mock("./components/CodeEditor", () => ({
   default: ({ value, onChange }) => (
@@ -329,4 +332,70 @@ it("shows workspace permission errors inside the existing creation dialog", asyn
   click("Create");
   expect(await screen.findByRole("alert")).toHaveTextContent("You don't have permission to do that.");
   expect(screen.getByLabelText("Workspace name")).toHaveValue("New project");
+});
+
+it.each(["login", "register"])("offers Google on %s and prevents duplicate sign-in requests", async (route) => {
+  const original = fetch.getMockImplementation();
+  const gate = deferred();
+  fetch.mockImplementation((url, options) => url.endsWith('/auth/google/start/') ? gate.promise : original(url, options));
+  mount(`/${route}`);
+  const button = await screen.findByRole('button', { name: 'Continue with Google' });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  expect(screen.getByRole('button', { name: 'Connecting…' })).toBeDisabled();
+  await waitFor(() => expect(fetch.mock.calls.filter(([url]) => url.endsWith('/auth/google/start/'))).toHaveLength(1));
+  await act(async () => gate.resolve(response({ authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=one-time' })));
+  expect(navigateToProvider).toHaveBeenCalledExactlyOnceWith('https://accounts.google.com/o/oauth2/v2/auth?state=one-time');
+  expect(localStorage.getItem('access')).toBeNull();
+});
+
+it('shows a friendly Google configuration failure and re-enables password login', async () => {
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, options) => url.endsWith('/auth/google/start/')
+    ? Promise.resolve(response({ code: 'google_unavailable' }, 503)) : original(url, options));
+  mount('/login');
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent("Google sign-in isn't available yet. Please use your username and password.");
+  expect(screen.getByRole('button', { name: 'Log in', exact: true })).toBeEnabled();
+  expect(navigateToProvider).not.toHaveBeenCalled();
+});
+
+it('restores the Google refresh-cookie session and redirects to the workspace dashboard', async () => {
+  signedIn = true;
+  mount('/auth/google/callback?result=google_success');
+  await screen.findByRole('heading', { name: 'Your workspaces' });
+  expect(requests.some(request => request.url.endsWith('/auth/refresh/'))).toBe(true);
+  expect(screen.getByRole('link', { name: 'Project one' })).toBeInTheDocument();
+});
+
+it.each([
+  ['google_cancelled', 'Google sign-in was canceled.'],
+  ['google_invalid_state', 'This sign-in attempt expired or is no longer valid.'],
+  ['google_account_exists', 'An account already uses this email.'],
+  ['google_failed', "Google sign-in couldn't be completed."],
+  ['SECRET-server-traceback', "Google sign-in couldn't be completed."],
+  ['google_success', 'Your session has expired.'],
+])('handles Google callback %s without echoing unsafe query text', async (result, message) => {
+  mount(`/auth/google/callback?result=${result}`);
+  expect(await screen.findByRole('alert')).toHaveTextContent(message);
+  expect(screen.getByRole('alert')).not.toHaveTextContent(/SECRET|traceback|HTTP/);
+  expect(screen.getByRole('link', { name: 'Return to sign in' })).toBeInTheDocument();
+});
+
+it('links Google only after confirming the existing account password', async () => {
+  signedIn = true;
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, options) => url.endsWith('/auth/google/link/')
+    ? Promise.resolve(response({ authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=link' })) : original(url, options));
+  mount();
+  await screen.findByRole('heading', { name: 'Your workspaces' });
+  click('Connect Google account');
+  expect(screen.getByRole('button', { name: 'Continue with Google' })).toBeDisabled();
+  fill('Current password', 'Current-password!27');
+  click('Continue with Google');
+  await waitFor(() => expect(navigateToProvider).toHaveBeenCalled());
+  const [, options] = fetch.mock.calls.find(([url]) => url.endsWith('/auth/google/link/'));
+  expect(options).toMatchObject({ credentials: 'include', method: 'POST', headers: { 'X-CSRFToken': 'csrf', Authorization: expect.stringMatching(/^Bearer /) } });
+  expect(JSON.parse(options.body)).toEqual({ password: 'Current-password!27' });
+  expect(screen.getByLabelText('Current password')).toHaveValue('');
 });

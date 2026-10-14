@@ -24,12 +24,14 @@ def token_expiry(token):
     return datetime.fromtimestamp(token['exp'], tz=datetime_timezone.utc)
 
 
-def session_response(request, user, refresh, status=200):
-    response = Response({
-        'access': str(refresh.access_token),
-        'user': UserSerializer(user).data,
-        'csrf': get_token(request),
-    }, status=status)
+def session_response(request, user, refresh, status=200, response=None):
+    csrf = get_token(request)
+    if response is None:
+        response = Response({
+            'access': str(refresh.access_token),
+            'user': UserSerializer(user).data,
+            'csrf': csrf,
+        }, status=status)
     response.set_cookie(
         settings.AUTH_REFRESH_COOKIE, str(refresh),
         max_age=max(0, int((token_expiry(refresh) - timezone.now()).total_seconds())),
@@ -39,7 +41,7 @@ def session_response(request, user, refresh, status=200):
     return response
 
 
-def begin_session(request, user, status=200):
+def begin_session(request, user, status=200, response=None):
     with transaction.atomic():
         refresh = RefreshToken.for_user(user)
         session = AuthSession.objects.create(
@@ -47,7 +49,7 @@ def begin_session(request, user, status=200):
         )
         refresh['sid'] = str(session.pk)
     rotate_token(request)
-    return session_response(request, user, refresh, status)
+    return session_response(request, user, refresh, status, response=response)
 
 
 class CookieAuthView(APIView):

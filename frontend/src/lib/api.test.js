@@ -12,6 +12,18 @@ const session = (access = token()) => ({
 });
 
 describe("authentication HTTP client", () => {
+  it("starts Google through a CSRF-protected credentialed POST", async () => {
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' }))
+      .mockResolvedValueOnce(response({ authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=random' }));
+    expect(await createAuthClient().startGoogle()).toBe('https://accounts.google.com/o/oauth2/v2/auth?state=random');
+    expect(fetch.mock.calls[1]).toEqual(['http://api.test/api/auth/google/start/', expect.objectContaining({
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'csrf' }, body: '{}',
+    })]);
+  });
+  it.each(['https://evil.example/auth', 'javascript:alert(1)', 'https://accounts.google.com.evil.example/o/oauth2/v2/auth'])("rejects an untrusted Google authorization destination %s", async (authorization_url) => {
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response({ authorization_url }));
+    await expect(createAuthClient().startGoogle()).rejects.toThrow("Google sign-in couldn't be started.");
+  });
   it("uses the browser origin for relative HTTP and WebSocket API URLs", async () => {
     vi.stubEnv("VITE_API_URL", "/api");
     vi.resetModules();

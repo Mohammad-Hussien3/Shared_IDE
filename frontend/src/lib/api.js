@@ -139,6 +139,18 @@ export function createAuthClient() {
     },
     restore: refresh,
     getAccessToken,
+    async startGoogle(password) {
+      if (refreshPromise) await refreshPromise.catch(() => {});
+      const link = password !== undefined;
+      const token = link ? await getAccessToken() : null;
+      const result = await authRequest(link ? "google/link" : "google/start", link ? { password } : {}, token);
+      // The server controls this destination; additionally reject arbitrary URLs.
+      const url = new URL(result.authorization_url);
+      if (url.origin !== "https://accounts.google.com" || url.pathname !== "/o/oauth2/v2/auth" || url.username || url.password || url.hash) {
+        throw new UserFacingError("Google sign-in couldn't be started. Please try again.");
+      }
+      return url.href;
+    },
     async authenticate(action, body) {
       if (refreshPromise) await refreshPromise.catch(() => {});
       generation += 1;

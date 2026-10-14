@@ -1,10 +1,12 @@
 import { useTheme } from "../lib/useTheme";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { Code2, LoaderCircle } from "lucide-react";
 import { useAuth } from "../auth/context";
 import { ThemeButton } from "../components/AccountControls";
 import { getErrorMessage } from "../lib/errors";
+import GoogleButton from "../components/GoogleButton";
+import { navigateToProvider } from "../lib/navigation";
 
 export default function AuthPage({ register = false }) {
   const {
@@ -18,11 +20,13 @@ export default function AuthPage({ register = false }) {
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false);
+  const [googlePending, setGooglePending] = useState(false);
+  const googleInProgress = useRef(false);
   const [error, setError] = useState("");
   if (user) return <Navigate to="/workspaces" replace />;
   const submit = async (event) => {
     event.preventDefault();
-    if (pending) return;
+    if (pending || googleInProgress.current) return;
     if (register && password !== confirmation) {
       setError("Passwords do not match.");
       return;
@@ -40,6 +44,20 @@ export default function AuthPage({ register = false }) {
       setError(getErrorMessage(err, register ? "register" : "login"));
     } finally {
       setPending(false);
+    }
+  };
+  const startGoogle = async () => {
+    if (pending || googleInProgress.current) return;
+    googleInProgress.current = true;
+    setGooglePending(true);
+    setError("");
+    setSessionError("");
+    try {
+      navigateToProvider(await client.startGoogle());
+    } catch (err) {
+      setError(getErrorMessage(err));
+      googleInProgress.current = false;
+      setGooglePending(false);
     }
   };
   return (
@@ -60,6 +78,8 @@ export default function AuthPage({ register = false }) {
             ? "A private space for your code and ideas."
             : "Sign in to your workspaces."}
         </p>
+        <GoogleButton onClick={startGoogle} disabled={pending || googlePending} pending={googlePending} />
+        <div className="auth-divider">or use your password</div>
         <label className="field-label">
           Username
           <input
@@ -68,7 +88,7 @@ export default function AuthPage({ register = false }) {
             maxLength={150}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            disabled={pending}
+            disabled={pending || googlePending}
           />
         </label>
         <label className="field-label">
@@ -81,7 +101,7 @@ export default function AuthPage({ register = false }) {
             minLength={register ? 8 : undefined}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={pending}
+            disabled={pending || googlePending}
           />
         </label>
         {register && (
@@ -94,7 +114,7 @@ export default function AuthPage({ register = false }) {
               maxLength={128}
               value={confirmation}
               onChange={(e) => setConfirmation(e.target.value)}
-              disabled={pending}
+              disabled={pending || googlePending}
             />
           </label>
         )}
@@ -109,7 +129,7 @@ export default function AuthPage({ register = false }) {
             {error || sessionError}
           </div>
         )}
-        <button className="button button-primary" disabled={pending}>
+        <button className="button button-primary" disabled={pending || googlePending}>
           {pending && <LoaderCircle size={15} className="spin" />}
           {pending ? "Please wait…" : register ? "Create account" : "Log in"}
         </button>

@@ -96,6 +96,12 @@ CSRF_COOKIE_SECURE = AUTH_COOKIE_SECURE
 CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
 SESSION_COOKIE_SECURE = AUTH_COOKIE_SECURE
 
+# Public browser URLs are explicit, never taken from user-supplied redirects.
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
+GOOGLE_FRONTEND_ORIGIN = os.getenv('GOOGLE_FRONTEND_ORIGIN', 'http://localhost:5173').rstrip('/')
+GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5173/api/auth/google/callback/')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ['accounts.authentication.SessionJWTAuthentication'],
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],

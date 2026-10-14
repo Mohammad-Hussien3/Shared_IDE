@@ -1,5 +1,16 @@
 // Server bodies may contain secrets or tracebacks. Only curated validation
 // messages and developer-authored local messages reach error displays.
+export const GOOGLE_MESSAGES = {
+  google_failed: "Google sign-in couldn't be completed. Please try again.",
+  google_cancelled: "Google sign-in was canceled. You can try again or use your password.",
+  google_invalid_state: "This sign-in attempt expired or is no longer valid. Please start again.",
+  google_account_exists: "An account already uses this email. Sign in with your password, then connect Google from your dashboard.",
+  google_link_conflict: "This Google account or your account is already connected. Sign in using the existing connection.",
+  google_verification_required: "Sign in and confirm your current password before connecting Google.",
+  google_unavailable: "Google sign-in isn't available yet. Please use your username and password.",
+  google_origin: "Open the app using its configured sign-in address and try again.",
+};
+
 export const ERROR_MESSAGES = {
   unexpected: "Something went wrong. Please try again.",
   network: "Could not connect. Check your internet connection and try again.",
@@ -84,7 +95,7 @@ export class HttpError extends Error {
     super();
     this.name = "HttpError";
     this.status = status;
-    this.code = data?.code === "csrf_failed" ? "csrf_failed" : undefined;
+    this.code = data?.code === "csrf_failed" || Object.hasOwn(GOOGLE_MESSAGES, data?.code || "") ? data.code : undefined;
     this.csrf = this.code === "csrf_failed" || (status === 403 && /^CSRF verification failed\b/.test(data?.detail || ""));
     this.validation = [400, 422].includes(status) ? validationMessages(data) : [];
     this.fields = Object.keys(FIELD_LABELS).filter(field => data && Object.hasOwn(data, field));
@@ -95,6 +106,7 @@ export class HttpError extends Error {
 
 function messageFor(error, context) {
   if (error instanceof UserFacingError) return error.message;
+  if (Object.hasOwn(GOOGLE_MESSAGES, error?.code || "")) return GOOGLE_MESSAGES[error.code];
   const status = error?.status;
   if (status === 403 && (error?.code === "csrf_failed" || error?.csrf)) return ERROR_MESSAGES.csrf;
   if (status === 401) return context === "login" ? ERROR_MESSAGES.login : ERROR_MESSAGES.session;

@@ -33,7 +33,7 @@ class AuthenticationTests(APITestCase):
         user = get_user_model().objects.get(username='alice')
         self.assertTrue(user.check_password(self.password))
         self.assertNotEqual(user.password, self.password)
-        self.assertEqual(result.data['user'], {'id': user.id, 'username': 'alice'})
+        self.assertEqual(result.data['user'], {'id': user.id, 'username': 'alice', 'google_connected': False, 'has_password': True})
         cookie = result.cookies[settings.AUTH_REFRESH_COOKIE]
         self.assertTrue(cookie['httponly'])
         self.assertEqual(cookie['samesite'], 'Lax')

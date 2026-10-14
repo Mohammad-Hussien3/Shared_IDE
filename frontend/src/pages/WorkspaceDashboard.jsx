@@ -1,6 +1,6 @@
 import { useTheme } from "../lib/useTheme";
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   Code2,
   FolderOpen,
@@ -14,15 +14,17 @@ import AccountControls, { ThemeButton } from "../components/AccountControls";
 import { IconButton, ResourceDialog } from "../components/IdePrimitives";
 import { API_BASE_URL, responseData } from "../lib/api";
 import { getErrorMessage } from "../lib/errors";
+import GoogleAccountLink from "../components/GoogleAccountLink";
 
 export default function WorkspaceDashboard() {
+  const location = useLocation();
   const { client, user } = useAuth();
   const [theme, toggleTheme] = useTheme();
   const [workspaces, setWorkspaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState(null);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(location.state?.googleLinked ? "Google account connected." : "");
   const load = useCallback(
     (signal) =>
       client
@@ -107,6 +109,7 @@ export default function WorkspaceDashboard() {
         </div>
       </header>
       <section className="dashboard">
+        <GoogleAccountLink />
         <div className="dashboard-heading">
           <div>
             <span className="eyebrow">{user.username} / YOUR PROJECTS</span>
