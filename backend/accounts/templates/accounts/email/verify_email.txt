@@ -1,0 +1,12 @@
+Welcome to Shared IDE!
+
+Verify your email address to finish setting up your account and start creating your private workspaces.
+
+Verify Email:
+{{ verification_url }}
+
+This link expires in {{ expiration_minutes }} minutes and can only be used once. If it expires, request another link from the Check your email page.
+
+If you did not create this account, do not click the link. You can safely ignore this email; the account cannot sign in until verified.
+
+The Shared IDE team

@@ -77,7 +77,8 @@ beforeEach(() => {
       return signedIn && !expired
         ? response(authData())
         : response({ detail: "Session expired" }, 401);
-    if (url.endsWith("/auth/login/") || url.endsWith("/auth/register/")) {
+    if (url.endsWith("/auth/register/")) return response({ detail: "Check your email" }, 201);
+    if (url.endsWith("/auth/login/")) {
       if (failedAuth) return response({ detail: "Invalid credentials" }, 401);
       signedIn = true;
       return response(authData());
@@ -115,21 +116,25 @@ beforeEach(() => {
   });
 });
 
-it("protects workspace routes, validates registration, and reaches the dashboard", async () => {
+it("protects workspace routes and sends new registrations to check email without signing in", async () => {
   mount(`/workspaces/${WORKSPACE_ID}`);
   await screen.findByRole("heading", { name: "Welcome back" });
   expect(requests.some((r) => r.url.includes("/workspaces/"))).toBe(false);
   fireEvent.click(screen.getByRole("link", { name: "Create an account" }));
   fill("Username", "alice");
+  fill("Email address", "alice@example.com");
   fill("Password", "Secure-password!79");
   fill("Confirm password", "wrong");
   click("Create account");
   expect(screen.getByRole("alert")).toHaveTextContent("Passwords do not match");
   fill("Confirm password", "Secure-password!79");
   click("Create account");
-  await screen.findByRole("heading", { name: "Your workspaces" });
+  await screen.findByRole("heading", { name: "Check your email" });
+  expect(signedIn).toBe(false);
+  expect(screen.getByRole("button", { name: "Resend in 60s" })).toBeDisabled();
   expect(requests.find((r) => r.url.endsWith("/auth/register/")).body).toEqual({
     username: "alice",
+    email: "alice@example.com",
     password: "Secure-password!79",
     confirm_password: "Secure-password!79",
   });
@@ -285,6 +290,7 @@ it.each([
   ["register", 400, { username: ["A user with that username already exists."] }, "Username already exists. Choose another username."],
   ["register", 400, { password: ["This password is too common."] }, "This password is too common. Choose a stronger password."],
   ["login", 401, { detail: "Invalid credentials" }, "Invalid username or password. Please try again."],
+  ["login", 403, { code: "email_unverified" }, "Please verify your email first."],
   ["register", 403, { code: "csrf_failed", detail: "CSRF verification failed. SECRET=private" }, "We couldn't verify this request. Refresh the page and try again."],
   ["login", 429, { detail: "Throttle backend internals" }, "Too many attempts. Please wait a moment and try again."],
   ["register", 500, { detail: "Traceback /srv/settings.py SECRET=private" }, "The service is temporarily unavailable. Please try again shortly."],
@@ -301,7 +307,10 @@ it.each([
   await screen.findByLabelText("Username", { exact: true });
   fill("Username", "alice");
   fill("Password", "Secure-password!79");
-  if (action === "register") fill("Confirm password", "Secure-password!79");
+  if (action === "register") {
+    fill("Email address", "alice@example.com");
+    fill("Confirm password", "Secure-password!79");
+  }
   click(action === "register" ? "Create account" : "Log in");
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(screen.getByRole("alert")).not.toHaveTextContent(/HTTP|CSRF|Traceback|SECRET|settings\.py|Throttle/);
@@ -365,7 +374,7 @@ it('restores the Google refresh-cookie session and redirects to the workspace da
   mount('/auth/google/callback?result=google_success');
   await screen.findByRole('heading', { name: 'Your workspaces' });
   expect(requests.some(request => request.url.endsWith('/auth/refresh/'))).toBe(true);
-  expect(screen.getByRole('link', { name: 'Project one' })).toBeInTheDocument();
+  expect(await screen.findByRole('link', { name: 'Project one' })).toBeInTheDocument();
 });
 
 it.each([

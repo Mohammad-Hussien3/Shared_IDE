@@ -34,3 +34,14 @@ class GoogleAuthAttempt(models.Model):
     consumed_at = models.DateTimeField(null=True)
     link_session = models.ForeignKey(AuthSession, null=True, on_delete=models.CASCADE)
     link_proof = models.CharField(max_length=64, blank=True)
+
+
+class EmailVerification(models.Model):
+    """Verification for new password accounts; only token digests are stored."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='email_verification')
+    email = models.EmailField(max_length=254, unique=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+    token_hash = models.CharField(max_length=64, unique=True, null=True)
+    expires_at = models.DateTimeField(null=True)
+    sent_at = models.DateTimeField(null=True)

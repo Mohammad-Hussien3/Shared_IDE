@@ -139,6 +139,8 @@ export function createAuthClient() {
     },
     restore: refresh,
     getAccessToken,
+    verifyEmail: (token) => authRequest("verify-email", { token }),
+    resendVerification: (email) => authRequest("resend-verification", { email }),
     async startGoogle(password) {
       if (refreshPromise) await refreshPromise.catch(() => {});
       const link = password !== undefined;
@@ -155,7 +157,9 @@ export function createAuthClient() {
       if (refreshPromise) await refreshPromise.catch(() => {});
       generation += 1;
       try {
-        return acceptSession(await authRequest(action, body));
+        const data = await authRequest(action, body);
+        // Password signup requires email verification and never creates a session.
+        return action === "register" ? data : acceptSession(data);
       } catch (error) {
         if (error.status === 403) csrf = null;
         throw error;

@@ -1,6 +1,6 @@
 import { useTheme } from "../lib/useTheme";
 import { useRef, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { Code2, LoaderCircle } from "lucide-react";
 import { useAuth } from "../auth/context";
 import { ThemeButton } from "../components/AccountControls";
@@ -9,6 +9,7 @@ import GoogleButton from "../components/GoogleButton";
 import { navigateToProvider } from "../lib/navigation";
 
 export default function AuthPage({ register = false }) {
+  const navigate = useNavigate();
   const {
     user,
     client,
@@ -17,6 +18,7 @@ export default function AuthPage({ register = false }) {
   } = useAuth();
   const [theme, toggleTheme] = useTheme();
   const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false);
@@ -38,8 +40,9 @@ export default function AuthPage({ register = false }) {
       await client.authenticate(register ? "register" : "login", {
         username: username.trim(),
         password,
-        ...(register ? { confirm_password: confirmation } : {}),
+        ...(register ? { email: email.trim(), confirm_password: confirmation } : {}),
       });
+      if (register) navigate('/check-email', { replace: true, state: { email: email.trim(), justRegistered: true } });
     } catch (err) {
       setError(getErrorMessage(err, register ? "register" : "login"));
     } finally {
@@ -85,12 +88,19 @@ export default function AuthPage({ register = false }) {
           <input
             autoComplete="username"
             required
-            maxLength={150}
+            maxLength={register ? 150 : 254}
+            placeholder={register ? undefined : "Username or email address"}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             disabled={pending || googlePending}
           />
         </label>
+        {register && (
+          <label className="field-label">Email address
+            <input type="email" autoComplete="email" required maxLength={254} value={email}
+              onChange={event => setEmail(event.target.value)} disabled={pending || googlePending} />
+          </label>
+        )}
         <label className="field-label">
           Password
           <input
@@ -139,6 +149,7 @@ export default function AuthPage({ register = false }) {
             {register ? "Log in" : "Create an account"}
           </Link>
         </p>
+        <Link to="/check-email" state={{ email: register ? email : username.includes('@') ? username : '' }}>Resend verification email</Link>
       </form>
     </main>
   );

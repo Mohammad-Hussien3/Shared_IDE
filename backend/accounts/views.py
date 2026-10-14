@@ -1,8 +1,11 @@
 from datetime import datetime, timezone as datetime_timezone
 from uuid import UUID
+import logging
+from smtplib import SMTPException
 
 from django.conf import settings
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
+from django.core.exceptions import ImproperlyConfigured
 from django.db import IntegrityError, transaction
 from django.middleware.csrf import get_token, rotate_token
 from django.utils import timezone
@@ -16,8 +19,11 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import AccessToken, RefreshToken, UntypedToken
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
-from .models import AuthSession
-from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
+from .models import AuthSession, EmailVerification
+from .serializers import LoginSerializer, RegisterSerializer, UserSerializer, ResendVerificationSerializer, VerifyEmailSerializer
+from .verification import CHECK_EMAIL_MESSAGE, consume_verification, send_verification, verification_required
+
+logger = logging.getLogger(__name__)
 
 
 def token_expiry(token):
@@ -93,9 +99,45 @@ class RegisterView(CookieAuthView):
         try:
             with transaction.atomic():
                 user = serializer.save()
-                return begin_session(request, user, status=201)
+                record = EmailVerification.objects.create(user=user, email=user.email)
+                send_verification(record)
+                return Response({'detail': CHECK_EMAIL_MESSAGE}, status=201)
         except IntegrityError:
-            return Response({'username': ['This username is unavailable.']}, status=400)
+            return Response({'detail': 'This username or email is unavailable.'}, status=400)
+        except (SMTPException, OSError, ImproperlyConfigured, ValueError) as exc:
+            # Exception type helps diagnose SMTP configuration without logging
+            # provider responses, credentials, recipients, or verification links.
+            logger.error('Registration verification email delivery failed (%s).', type(exc).__name__)
+            return Response({'code': 'email_delivery_failed'}, status=503)
+
+
+class VerifyEmailView(CookieAuthView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth'
+
+    def post(self, request):
+        serializer = VerifyEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        code = consume_verification(serializer.validated_data['token'])
+        return Response({'code': code}, status=200 if code == 'email_verified' else 400)
+
+
+class ResendVerificationView(CookieAuthView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'verification_resend'
+
+    def post(self, request):
+        serializer = ResendVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record = EmailVerification.objects.filter(email=serializer.validated_data['email'].strip().lower()).first()
+        if record:
+            try:
+                send_verification(record)
+            except (SMTPException, OSError, ImproperlyConfigured, ValueError) as exc:
+                # Same response for unknown, verified, throttled-by-cooldown,
+                # and delivery-failed addresses. Never log addresses or tokens.
+                logger.error('Resend verification email delivery failed (%s).', type(exc).__name__)
+        return Response({'detail': CHECK_EMAIL_MESSAGE}, status=202)
 
 
 class LoginView(CookieAuthView):
@@ -105,9 +147,19 @@ class LoginView(CookieAuthView):
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = authenticate(request=request, **serializer.validated_data)
+        credentials = dict(serializer.validated_data)
+        identifier = credentials['username']
+        User = get_user_model()
+        # Preserve existing username login, and support an unambiguous email.
+        if not User.objects.filter(username=identifier).exists():
+            matches = list(User.objects.filter(email__iexact=identifier).values_list('username', flat=True)[:2])
+            if len(matches) == 1:
+                credentials['username'] = matches[0]
+        user = authenticate(request=request, **credentials)
         if user is None:
             return Response({'detail': 'Invalid username or password.'}, status=401)
+        if verification_required(user):
+            return Response({'code': 'email_unverified', 'detail': 'Please verify your email first.'}, status=403)
         return begin_session(request, user)
 
 
@@ -122,6 +174,8 @@ class RefreshView(CookieAuthView):
                     revoked_at__isnull=True, expires_at__gt=timezone.now(),
                     refresh_jti=refresh['jti'],
                 )
+                if verification_required(session.user):
+                    return Response({'code': 'email_unverified', 'detail': 'Please verify your email first.'}, status=401)
                 # Also enforce password-change revocation for refresh tokens.
                 from rest_framework_simplejwt.utils import get_md5_hash_password
                 if refresh.get('hash_password') != get_md5_hash_password(session.user.password):

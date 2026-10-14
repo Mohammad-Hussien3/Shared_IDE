@@ -5,11 +5,14 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .models import AuthSession
+from .verification import verification_required
 
 
 class SessionJWTAuthentication(JWTAuthentication):
     def get_user(self, validated_token):
         user = super().get_user(validated_token)
+        if verification_required(user):
+            raise AuthenticationFailed('Please verify your email first.', code='email_unverified')
         try:
             session_id = UUID(str(validated_token.get('sid', '')))
         except ValueError:

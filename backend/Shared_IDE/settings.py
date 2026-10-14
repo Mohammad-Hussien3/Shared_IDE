@@ -102,10 +102,22 @@ GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_FRONTEND_ORIGIN = os.getenv('GOOGLE_FRONTEND_ORIGIN', 'http://localhost:5173').rstrip('/')
 GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI', 'http://localhost:5173/api/auth/google/callback/')
 
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+# SMTP is the default in development too; console delivery must be explicit.
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'true').lower() == 'true'
+EMAIL_USE_SSL = os.getenv('EMAIL_USE_SSL', 'false').lower() == 'true'
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'Shared IDE <noreply@localhost>')
+EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ['accounts.authentication.SessionJWTAuthentication'],
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
-    'DEFAULT_THROTTLE_RATES': {'auth': '30/minute'},
+    'DEFAULT_THROTTLE_RATES': {'auth': '30/minute', 'verification_resend': '5/hour'},
 }
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),

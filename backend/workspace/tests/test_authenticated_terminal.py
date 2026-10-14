@@ -7,7 +7,7 @@ from django.test import TransactionTestCase
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 
-from accounts.models import AuthSession
+from accounts.models import AuthSession, EmailVerification
 from workspace.models import Workspace, File
 from .test_websockets import TerminalClient, ORIGIN, FakeInteractiveRunner
 
@@ -116,3 +116,10 @@ class AuthenticatedTerminalTests(TransactionTestCase):
         client = await self.authenticate(self.alice_token)
         self.assertEqual((await client.app.receive_output())['code'], 4401)
         await client.disconnect()
+
+    async def test_unverified_password_account_cannot_start_terminal_with_old_token(self):
+        await database_sync_to_async(EmailVerification.objects.create)(user=self.alice, email='alice@example.com')
+        client = await self.authenticate(self.alice_token)
+        self.assertEqual((await client.app.receive_output())['code'], 4401)
+        await client.disconnect()
+        self.assertEqual(FakeInteractiveRunner.instances, [])

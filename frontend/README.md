@@ -11,7 +11,7 @@ npm run dev
 
 Set `VITE_API_URL=/api` (see `.env.example`). Vite forwards `/api` HTTP and WebSocket requests to Django at `http://127.0.0.1:8000`, while browser cookies stay on whichever frontend hostname you open: `http://localhost:5173` or `http://127.0.0.1:5173`. Restart Vite after changing `.env`. For a different backend port, start Vite with `DEV_API_TARGET=http://127.0.0.1:8001 npm run dev`. Port 5173 is fixed so Vite will not silently switch to an untrusted origin.
 
-Register or log in, then create/open a workspace from the dashboard. `VITE_WORKSPACE_ID` and the old anonymous localStorage selection are no longer used. Run Django migrations and prepare its Podman images using the project's existing setup. The frontend does not execute code locally.
+Register with a username, email, and password, verify the emailed link, then log in and create/open a workspace from the dashboard. Login accepts your username or email address. Google sign-in continues to work independently. `VITE_WORKSPACE_ID` and the old anonymous localStorage selection are no longer used. Run Django migrations and prepare its Podman images using the project's existing setup. The frontend does not execute code locally.
 
 ### CSRF and local hostnames
 
@@ -20,6 +20,63 @@ A frontend on `localhost` calling an API on `127.0.0.1` cannot use the default `
 Django's `FRONTEND_ORIGINS` defaults to `http://localhost:5173,http://127.0.0.1:5173` for both CORS and CSRF origin checking. Add an exact origin if you use a custom frontend port. For local HTTP use `AUTH_COOKIE_SECURE=false`; production HTTPS defaults remain secure. CSRF protection, HttpOnly cookies, and `SameSite=Lax` stay enabled.
 
 The API client fetches `/api/auth/csrf/` with credentials and caching disabled before cookie-authenticated requests. Registration, login, refresh, and logout send credentials and `X-CSRFToken`. A stale token is refreshed once after an explicit CSRF rejection; persistent failures show a friendly refresh prompt. CSRF protection and the same-origin development proxy are independent of error message formatting. Production needs its own `/api` reverse proxy or a correctly configured absolute API URL; Vite's development proxy is not part of the production build.
+
+## Email verification for password signup
+
+Run the new accounts migration before starting the updated application:
+
+```sh
+python backend/manage.py migrate
+```
+
+New password registrations require a validated email, username, password, and matching password confirmation. Signup returns a check-email response and **does not issue access or refresh tokens**. A dedicated `EmailVerification` record tracks the normalized address and verification status without replacing Django's User model. Login, refresh, authenticated HTTP requests, and terminal authentication reject unverified new accounts.
+
+**Compatibility:** existing accounts created before this feature keep their access; they have no verification record and are not retroactively marked unverified. Google-created users likewise need no extra email verification. Google identity mapping, OAuth, account linking, and workspace ownership are unchanged. Email matching never merges accounts, and email login is permitted only when it identifies one user (existing exact usernames retain priority). Email changes are not exposed by this feature; changing a verified account's email administratively requires a corresponding verification reset/reissue.
+
+### Email environment variables
+
+Set these in `backend/.env`; do not put mail credentials in frontend variables:
+
+| Variable | Local example / purpose |
+| --- | --- |
+| `EMAIL_BACKEND` | `django.core.mail.backends.console.EmailBackend`; use `django.core.mail.backends.smtp.EmailBackend` for SMTP |
+| `EMAIL_HOST` | Your provider's SMTP hostname |
+| `EMAIL_PORT` | `587` for SMTP with STARTTLS |
+| `EMAIL_USE_TLS` | `true` for STARTTLS; not implicit TLS on port 465 |
+| `EMAIL_HOST_USER` | Provider SMTP username |
+| `EMAIL_HOST_PASSWORD` | Provider SMTP password or app password |
+| `DEFAULT_FROM_EMAIL` | `Shared IDE <noreply@your-domain.example>`; use a sender verified by your provider |
+| `FRONTEND_URL` | `http://localhost:5173` locally; your HTTPS frontend origin in production |
+
+`FRONTEND_URL` must be an exact trusted origin in `FRONTEND_ORIGINS`, without a path, query, or fragment. HTTP is accepted only for loopback development with `DJANGO_DEBUG=true`. It is separate from the existing Google URL settings. Use `VITE_API_URL=/api` and one consistent browser hostname for cookies. Production requires HTTPS and secure refresh/CSRF cookies as before. `EMAIL_TIMEOUT` sets the socket timeout in seconds (default `10`). Increase it only if diagnostics show a timeout; it cannot fix rejected authentication or a server closing the connection.
+
+For Gmail SMTP, use `EMAIL_HOST=smtp.gmail.com`, `EMAIL_PORT=587`, `EMAIL_USE_TLS=true`, and `EMAIL_USE_SSL=false`. `EMAIL_HOST_USER` is the full Gmail address. Use a newly generated 16-character Gmail app password in `EMAIL_HOST_PASSWORD`, without display-group spaces or hyphens, rather than the normal account password. App passwords require 2-Step Verification and may be unavailable under organization or Advanced Protection policies. See [Google's app-password instructions](https://support.google.com/accounts/answer/185833?hl=en). This SMTP credential is independent of the application's Google OAuth client.
+
+Transport logs include the phase (`connect_tls_auth`, `message_submission`, or `connection_cleanup`), exception/context type, numeric SMTP response code when available, and elapsed time. They exclude credentials, recipients, message bodies, and raw server responses. `SMTPAuthenticationError` with code 535 points to rejected authentication; `SMTPServerDisconnected` without a code means the connection was closed and does not alone prove a bad password. If greeting, EHLO, and STARTTLS succeed but AUTH disconnects promptly, investigate Gmail account policy/app-password configuration and any network filtering of SMTP authentication. A timeout context indicates a slow or interrupted socket operation. Never enable SMTP protocol debug logging in production because it can expose AUTH payloads and verification links.
+
+Each verification send owns and closes its connection, including failed STARTTLS/login attempts. A cleanup failure after SMTP acceptance does not invalidate the emailed token. Failed submissions are not automatically retried because an interrupted response can leave delivery status uncertain.
+
+### Test locally and with a real inbox
+
+1. SMTP is the default even with debug enabled. For a deliberate console-only local test, set `EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend`, restart Django, and register a new account. Django prints the full email in its terminal; no email is actually delivered by this backend. Treat the printed link as a secret.
+2. Confirm signup shows **Check your email**, and password login is blocked until verification.
+3. Open the printed link. React automatically submits its token to the verification endpoint, shows **Email verified**, and offers **Go to Login**. Reopening the same link shows **Link already used**. Login now succeeds and the account can create its own workspaces.
+4. For real delivery, set `EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend` and your provider's SMTP values above. Configure the verified sender/domain and its SPF/DKIM settings with that provider. Restart Django after changing `.env`; exported process variables take precedence over `.env`, so remove any stale `EMAIL_BACKEND` override in the shell or service configuration. Register using an inbox you control; confirm both plain text and HTML email arrive and the link works. Check spam and the provider's delivery log if needed. SMTP acceptance alone does not guarantee inbox delivery.
+5. Test resend from **Check your email** after 60 seconds. The new link replaces the previous one, and expires after 30 minutes. An expired or invalid link offers another resend; a used link offers login.
+
+Both HTML and text templates live under `backend/accounts/templates/accounts/email/`. The subject is **Verify your Shared IDE email address**. The message explains the 30-minute expiry and tells unexpected recipients not to click the link.
+
+### API and security behavior
+
+- `POST /api/auth/register/`: `{username, email, password, confirm_password}` → `201`, no session.
+- `POST /api/auth/verify-email/`: `{token}` → `200` with `email_verified`, or `400` with `verification_invalid`, `verification_expired`, or `verification_used`.
+- `POST /api/auth/resend-verification/`: `{email}` → the same `202` message for unknown, verified, inactive, Google-only, or eligible addresses. SMTP failures on this endpoint use the same response and a server log message without addresses or secrets.
+- Every endpoint uses the existing CSRF cookie/header protection. GET does not consume a verification token. Invalid/expired password login does not reveal verification status; the clear unverified message requires a correct password.
+- Tokens contain 256 random bits. Only SHA-256 digests are stored. One conditional SQL update consumes a token, with the digest, expiry, and unverified state checked in the update itself. Resend uses a database-enforced 60-second cooldown, invalidates older links, and has a DRF limit of five requests per hour per client IP, including unknown addresses. Configure a shared Django cache and appropriate proxy/client-IP handling for consistent throttling across production workers; the database cooldown applies across workers already.
+- Links use `/verify-email#token=...` so the token is not sent in frontend HTTP URLs or Referer headers. React removes the fragment from history and keeps the pending verification request in memory, including through React StrictMode effect replay. No verification token enters localStorage.
+- Initial SMTP failure rolls back registration and returns a friendly retry error. Failed resend rolls back token replacement, leaving the previous link usable until its original expiry. Email is sent synchronously using Django's mail backend; large deployments may later move delivery to a durable job queue.
+
+Unit tests use Django's in-memory email backend and mocked Google/Podman services; CI needs no SMTP credentials. Real inbox delivery must be checked separately with your configured provider. See [Django's email documentation](https://docs.djangoproject.com/en/6.0/topics/email/) for backend configuration.
 
 ## Google sign-in setup
 

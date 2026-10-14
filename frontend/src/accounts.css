@@ -103,6 +103,8 @@
 .google-link-section { margin-bottom: 24px; }
 .google-link-form { display: grid; gap: 12px; max-width: 400px; margin-top: 12px; }
 .google-link-form p { color: var(--muted); font-size: 13px; }
+.email-resend-form { display: grid; gap: 14px; }
+.email-card p { line-height: 1.6; }
 .dashboard {
   width: min(1050px, calc(100% - 56px));
   margin: 48px auto;

@@ -12,6 +12,31 @@ const session = (access = token()) => ({
 });
 
 describe("authentication HTTP client", () => {
+  it('registration returns the check-email response without accepting a session', async () => {
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' }))
+      .mockResolvedValueOnce(response({ detail: 'Check your email' }, 201));
+    const client = createAuthClient();
+    const changed = vi.fn();
+    client.subscribe(changed);
+    const result = await client.authenticate('register', { username: 'alice', email: 'alice@example.com', password: 'Private!923' });
+    expect(result).toEqual({ detail: 'Check your email' });
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['verifyEmail', 'verify-email', 'a'.repeat(43), { token: 'a'.repeat(43) }],
+    ['resendVerification', 'resend-verification', 'alice@example.com', { email: 'alice@example.com' }],
+  ])('%s uses CSRF and credentials without accepting a session', async (method, path, value, body) => {
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response({ code: 'email_verified' }));
+    const client = createAuthClient();
+    const changed = vi.fn();
+    client.subscribe(changed);
+    await client[method](value);
+    expect(fetch.mock.calls[1]).toEqual([`http://api.test/api/auth/${path}/`, expect.objectContaining({
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'csrf' }, body: JSON.stringify(body),
+    })]);
+    expect(changed).not.toHaveBeenCalled();
+  });
   it("starts Google through a CSRF-protected credentialed POST", async () => {
     fetch.mockResolvedValueOnce(response({ csrf: 'csrf' }))
       .mockResolvedValueOnce(response({ authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=random' }));
@@ -42,7 +67,8 @@ describe("authentication HTTP client", () => {
     }
   });
 
-  it.each(["register", "login"])("bootstraps CSRF before %s and uses the rotated token on logout", async (action) => {
+  it("bootstraps CSRF before login and uses the rotated token on logout", async () => {
+    const action = "login";
     const bootstrap = deferred();
     fetch
       .mockReturnValueOnce(bootstrap.promise)
@@ -96,8 +122,11 @@ describe("authentication HTTP client", () => {
       credentials: "include",
       headers: { "X-CSRFToken": "fresh-csrf" },
     });
-    expect(changed).toHaveBeenCalledTimes(1);
-    expect(changed).toHaveBeenCalledWith(action === "logout" ? null : session().user);
+    if (action === "register") expect(changed).not.toHaveBeenCalled();
+    else {
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(changed).toHaveBeenCalledWith(action === "logout" ? null : session().user);
+    }
   });
 
   it("reports persistent CSRF failures without an infinite retry", async () => {

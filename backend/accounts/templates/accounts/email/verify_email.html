@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Verify your Shared IDE email address</title></head>
+<body style="margin:0;background:#f3f4f6;font-family:Arial,sans-serif;color:#20242b;padding:32px 16px">
+  <main style="max-width:540px;margin:auto;background:white;border:1px solid #e2e5ea;border-radius:12px;padding:32px">
+    <p style="font-size:14px;font-weight:bold;color:#536276">SHARED IDE</p>
+    <h1 style="font-size:24px">Welcome to Shared IDE</h1>
+    <p style="line-height:1.6">Verify your email address to finish setting up your account and start creating your private workspaces.</p>
+    <p style="margin:28px 0"><a href="{{ verification_url }}" style="display:inline-block;padding:12px 22px;background:#2563eb;color:white;border-radius:6px;text-decoration:none;font-weight:bold">Verify Email</a></p>
+    <p style="line-height:1.6">This link expires in <strong>{{ expiration_minutes }} minutes</strong> and can only be used once. If it expires, request another link from the Check your email page.</p>
+    <p style="font-size:13px;color:#536276;line-height:1.6">If the button does not work, copy this link into your browser:</p>
+    <p style="font-size:12px;overflow-wrap:anywhere"><a href="{{ verification_url }}">{{ verification_url }}</a></p>
+    <hr style="border:0;border-top:1px solid #e2e5ea;margin:28px 0">
+    <p style="font-size:13px;color:#536276;line-height:1.6">If you did not create this account, do not click the link. You can safely ignore this email; the account cannot sign in until verified.</p>
+    <p style="font-size:13px;color:#536276">The Shared IDE team</p>
+  </main>
+</body>
+</html>

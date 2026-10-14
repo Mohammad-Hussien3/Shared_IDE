@@ -17,17 +17,24 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(max_length=254)
     password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
     confirm_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
 
     class Meta:
         model = get_user_model()
-        fields = ['username', 'password', 'confirm_password']
+        fields = ['username', 'email', 'password', 'confirm_password']
+
+    def validate_email(self, value):
+        value = value.strip().lower()
+        if get_user_model().objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError('An account with this email already exists. Sign in instead.')
+        return value
 
     def validate(self, attrs):
         if attrs['password'] != attrs['confirm_password']:
             raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
-        user = get_user_model()(username=attrs['username'])
+        user = get_user_model()(username=attrs['username'], email=attrs['email'])
         try:
             password_validation.validate_password(attrs['password'], user)
         except ValidationError as exc:
@@ -40,5 +47,13 @@ class RegisterSerializer(serializers.ModelSerializer):
 
 
 class LoginSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150)
+    username = serializers.CharField(max_length=254)
     password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+
+
+class ResendVerificationSerializer(serializers.Serializer):
+    email = serializers.EmailField(max_length=254)
+
+
+class VerifyEmailSerializer(serializers.Serializer):
+    token = serializers.CharField(max_length=128, trim_whitespace=False)

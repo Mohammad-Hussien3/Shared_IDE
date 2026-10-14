@@ -11,6 +11,14 @@ export const GOOGLE_MESSAGES = {
   google_origin: "Open the app using its configured sign-in address and try again.",
 };
 
+export const VERIFICATION_MESSAGES = {
+  email_unverified: "Please verify your email first. Check your inbox or request a new verification email.",
+  verification_invalid: "This verification link is invalid. Request a new verification email.",
+  verification_expired: "This verification link has expired. Request a new verification email.",
+  verification_used: "This verification link has already been used. You can go to login.",
+  email_delivery_failed: "We couldn't send your verification email. Please try registering again shortly.",
+};
+
 export const ERROR_MESSAGES = {
   unexpected: "Something went wrong. Please try again.",
   network: "Could not connect. Check your internet connection and try again.",
@@ -35,10 +43,14 @@ export const ERROR_MESSAGES = {
 };
 
 const FIELD_LABELS = {
+  email: "Email address",
   username: "Username", password: "Password", confirm_password: "Password confirmation",
   name: "Name", content: "File content", language: "Language", parent: "Parent folder", folder: "Folder",
 };
 const VALIDATION_MESSAGES = {
+  "Enter a valid email address.": "Enter a valid email address.",
+  "An account with this email already exists. Sign in instead.": "An account with this email already exists. Sign in or request a verification email.",
+  "This username or email is unavailable.": "This username or email is unavailable. Sign in or use different details.",
   "A user with that username already exists.": "Username already exists. Choose another username.",
   "Username already exists": "Username already exists. Choose another username.",
   "Username already exists.": "Username already exists. Choose another username.",
@@ -95,7 +107,7 @@ export class HttpError extends Error {
     super();
     this.name = "HttpError";
     this.status = status;
-    this.code = data?.code === "csrf_failed" || Object.hasOwn(GOOGLE_MESSAGES, data?.code || "") ? data.code : undefined;
+    this.code = data?.code === "csrf_failed" || Object.hasOwn(GOOGLE_MESSAGES, data?.code || "") || Object.hasOwn(VERIFICATION_MESSAGES, data?.code || "") ? data.code : undefined;
     this.csrf = this.code === "csrf_failed" || (status === 403 && /^CSRF verification failed\b/.test(data?.detail || ""));
     this.validation = [400, 422].includes(status) ? validationMessages(data) : [];
     this.fields = Object.keys(FIELD_LABELS).filter(field => data && Object.hasOwn(data, field));
@@ -106,6 +118,7 @@ export class HttpError extends Error {
 
 function messageFor(error, context) {
   if (error instanceof UserFacingError) return error.message;
+  if (Object.hasOwn(VERIFICATION_MESSAGES, error?.code || "")) return VERIFICATION_MESSAGES[error.code];
   if (Object.hasOwn(GOOGLE_MESSAGES, error?.code || "")) return GOOGLE_MESSAGES[error.code];
   const status = error?.status;
   if (status === 403 && (error?.code === "csrf_failed" || error?.csrf)) return ERROR_MESSAGES.csrf;

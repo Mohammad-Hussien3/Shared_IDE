@@ -11,6 +11,7 @@ import { useAuth } from "./auth/context";
 import AuthPage from "./pages/AuthPage";
 import WorkspaceDashboard from "./pages/WorkspaceDashboard";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
+import { CheckEmailPage, VerifyEmailPage } from "./pages/EmailVerificationPage";
 import "./App.css";
 import "./accounts.css";
 
@@ -43,6 +44,8 @@ export function AppRoutes() {
     );
   return (
     <Routes>
+      <Route path="/check-email" element={<CheckEmailPage />} />
+      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
       <Route path="/login" element={<AuthPage key="login" />} />
       <Route path="/register" element={<AuthPage key="register" register />} />
