@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.db import transaction
 from django.db.models import Q
 from django.template.loader import render_to_string
@@ -37,7 +37,8 @@ def log_delivery_failure(phase, exc, started, *, cleanup=False):
 def deliver_message(message):
     # Own this message's connection explicitly. Django's SMTP open() may raise
     # during STARTTLS/login before send_messages() enters its cleanup block.
-    connection = message.get_connection(fail_silently=False)
+    connection = message.connection or get_connection(fail_silently=False)
+    message.connection = connection
     started = time.monotonic()
     phase = 'connect_tls_auth'
     try:

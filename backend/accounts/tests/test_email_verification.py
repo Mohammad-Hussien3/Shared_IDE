@@ -1,21 +1,45 @@
 import re
 from datetime import timedelta
 from smtplib import SMTPException, SMTPAuthenticationError, SMTPServerDisconnected
-from unittest.mock import ANY, patch
+from types import SimpleNamespace
+from unittest.mock import ANY, Mock, patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from accounts.models import AuthSession, EmailVerification, GoogleIdentity
-from accounts.verification import consume_verification, send_verification, token_digest
+from accounts.verification import consume_verification, deliver_message, send_verification, token_digest
 from accounts.views import token_expiry
 from workspace.models import Workspace
+
+
+class EmailConnectionTests(SimpleTestCase):
+    def test_delivery_uses_django_connection_factory_without_message_get_connection(self):
+        message = SimpleNamespace(connection=None, send=Mock(return_value=1))
+        with patch('accounts.verification.get_connection') as factory:
+            connection = factory.return_value
+            deliver_message(message)
+        factory.assert_called_once_with(fail_silently=False)
+        self.assertIs(message.connection, connection)
+        connection.open.assert_called_once_with()
+        message.send.assert_called_once_with(fail_silently=False)
+        connection.close.assert_called_once_with()
+
+    def test_delivery_reuses_an_explicit_message_connection(self):
+        connection = Mock()
+        message = SimpleNamespace(connection=connection, send=Mock(return_value=1))
+        with patch('accounts.verification.get_connection') as factory:
+            deliver_message(message)
+        factory.assert_not_called()
+        connection.open.assert_called_once_with()
+        message.send.assert_called_once_with(fail_silently=False)
+        connection.close.assert_called_once_with()
 
 
 @override_settings(DEBUG=True, AUTH_COOKIE_SECURE=False,
