@@ -12,6 +12,35 @@ const session = (access = token()) => ({
 });
 
 describe("authentication HTTP client", () => {
+  it('requests reset mail with CSRF and no authentication or email disclosure', async () => {
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' }))
+      .mockResolvedValueOnce(response({ detail: "If an account exists with this email, we've sent a password reset link." }, 202));
+    const client = createAuthClient();
+    const changed = vi.fn();
+    client.subscribe(changed);
+    await client.requestPasswordReset('owner@example.com');
+    expect(fetch.mock.calls[1]).toEqual(['http://api.test/api/auth/password-reset/', expect.objectContaining({
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'csrf' },
+      body: JSON.stringify({ email: 'owner@example.com' }),
+    })]);
+    expect(changed).not.toHaveBeenCalled();
+  });
+  it('clears the existing local session after reset without accepting a login token', async () => {
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response(session()))
+      .mockResolvedValueOnce(response({ code: 'password_reset' }));
+    const client = createAuthClient();
+    const changed = vi.fn();
+    client.subscribe(changed);
+    await client.authenticate('login', {});
+    const payload = { token: 'a'.repeat(43), password: 'Recovery-secret!9841', confirm_password: 'Recovery-secret!9841' };
+    await client.confirmPasswordReset(payload);
+    expect(fetch.mock.calls[2]).toEqual(['http://api.test/api/auth/password-reset/confirm/', expect.objectContaining({
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'rotated-csrf' },
+      body: JSON.stringify(payload),
+    })]);
+    expect(changed).toHaveBeenLastCalledWith(null);
+    expect(localStorage.length).toBe(0);
+  });
   it('waits for a pending password response before logout revokes its replacement cookie', async () => {
     const gate = deferred();
     fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response(session()))

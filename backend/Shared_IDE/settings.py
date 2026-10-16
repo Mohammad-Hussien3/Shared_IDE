@@ -120,6 +120,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'auth': '30/minute', 'verification_resend': '5/hour',
         'account_changes': '10/minute', 'account_email': '5/hour',
+        'password_reset_request': '5/hour', 'password_reset_confirm': '10/minute',
     },
 }
 SIMPLE_JWT = {

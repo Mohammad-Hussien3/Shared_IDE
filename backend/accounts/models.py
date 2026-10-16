@@ -57,3 +57,15 @@ class AccountVerification(models.Model):
     expires_at = models.DateTimeField()
     sent_at = models.DateTimeField()
     attempts = models.PositiveSmallIntegerField(default=0)
+
+
+class PasswordReset(models.Model):
+    """One outstanding reset per account; never stores the bearer token."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    token_hash = models.CharField(max_length=64, unique=True)
+    password_fingerprint = models.CharField(max_length=64)
+    email = models.EmailField(max_length=254)
+    expires_at = models.DateTimeField()
+    sent_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)

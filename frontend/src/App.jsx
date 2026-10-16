@@ -13,6 +13,7 @@ import AccountSettingsPage from "./pages/AccountSettingsPage";
 import WorkspaceDashboard from "./pages/WorkspaceDashboard";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import { CheckEmailPage, VerifyEmailPage } from "./pages/EmailVerificationPage";
+import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPage";
 import "./App.css";
 import "./accounts.css";
 
@@ -45,6 +46,8 @@ export function AppRoutes() {
     );
   return (
     <Routes>
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/check-email" element={<CheckEmailPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />

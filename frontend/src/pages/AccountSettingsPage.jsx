@@ -1,28 +1,12 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Check, Eye, EyeOff, LoaderCircle, ShieldCheck, UserRound } from "lucide-react";
+import { ArrowLeft, Check, LoaderCircle, ShieldCheck, UserRound } from "lucide-react";
 import { useAuth } from "../auth/context";
 import AccountControls, { ThemeButton } from "../components/AccountControls";
 import GoogleAccountLink from "../components/GoogleAccountLink";
+import PasswordField from "../components/PasswordField";
 import { useTheme } from "../lib/useTheme";
 import { getErrorMessage } from "../lib/errors";
-
-function PasswordField({ label, value, onChange, disabled, current = false }) {
-  const [visible, setVisible] = useState(false);
-  const id = useId();
-  return <div className="field-label account-password-label">
-    <label htmlFor={id}>{label}</label>
-    <span className="account-password-input">
-      <input id={id} type={visible ? "text" : "password"} value={value}
-        onChange={event => onChange(event.target.value)} required maxLength={128}
-        autoComplete={current ? "current-password" : "new-password"} disabled={disabled} />
-      <button type="button" className="icon-button" aria-label={`${visible ? "Hide" : "Show"} ${label.toLowerCase()}`}
-        aria-pressed={visible} onClick={() => setVisible(!visible)} disabled={disabled}>
-        {visible ? <EyeOff size={16} /> : <Eye size={16} />}
-      </button>
-    </span>
-  </div>;
-}
 
 function Feedback({ error, success }) {
   return <>{error && <p className="inline-error" role="alert">{error}</p>}

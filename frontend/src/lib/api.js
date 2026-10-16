@@ -161,6 +161,20 @@ export function createAuthClient() {
     getAccessToken,
     verifyEmail: (token) => authRequest("verify-email", { token }),
     resendVerification: (email) => authRequest("resend-verification", { email }),
+    requestPasswordReset: (email) => authRequest("password-reset", { email }),
+    async confirmPasswordReset(body) {
+      if (accountPromise) await accountPromise.catch(() => {});
+      if (refreshPromise) await refreshPromise.catch(() => {});
+      const data = await authRequest("password-reset/confirm", body);
+      // Recovery never logs in. Invalidate in-flight work and drop any old local
+      // session, matching the revoked tokens and cleared cookie on the server.
+      generation += 1;
+      access = null;
+      userId = null;
+      csrf = null;
+      changed(null);
+      return data;
+    },
     requestAccountVerification: () => accountRequest("verification"),
     updateUsername: (body) => accountRequest("username", body),
     updatePassword: (body) => accountRequest("password", body),

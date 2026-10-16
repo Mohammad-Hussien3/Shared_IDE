@@ -1,6 +1,6 @@
 import { useTheme } from "../lib/useTheme";
 import { useRef, useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Code2, LoaderCircle } from "lucide-react";
 import { useAuth } from "../auth/context";
 import { ThemeButton } from "../components/AccountControls";
@@ -10,6 +10,7 @@ import { navigateToProvider } from "../lib/navigation";
 
 export default function AuthPage({ register = false }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     user,
     client,
@@ -84,6 +85,9 @@ export default function AuthPage({ register = false }) {
                 : "Your ideas are right where you left them. Let’s get back to building."}
             </p>
           </header>
+          {!register && location.state?.passwordReset === true && (
+            <p role="status">Your password has been reset. Sign in with your new password.</p>
+          )}
           <label className="field-label">
             Username
             <input
@@ -115,6 +119,7 @@ export default function AuthPage({ register = false }) {
               disabled={pending || googlePending}
             />
           </label>
+          {!register && <Link to="/forgot-password">Forgot password?</Link>}
           {register && (
             <label className="field-label">
               Confirm password

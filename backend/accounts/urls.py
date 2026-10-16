@@ -2,8 +2,11 @@ from django.urls import path
 from .views import CSRFView, RegisterView, LoginView, LogoutView, RefreshView, MeView, VerifyEmailView, ResendVerificationView
 from .google_views import GoogleStartView, GoogleLinkView, GoogleCallbackView
 from .account_views import AccountVerificationView, UsernameView, PasswordView
+from .password_reset_views import PasswordResetRequestView, PasswordResetConfirmView
 
 urlpatterns = [
+    path('password-reset/', PasswordResetRequestView.as_view(), name='auth-password-reset'),
+    path('password-reset/confirm/', PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
     path('account/verification/', AccountVerificationView.as_view(), name='auth-account-verification'),
     path('account/username/', UsernameView.as_view(), name='auth-account-username'),
     path('account/password/', PasswordView.as_view(), name='auth-account-password'),

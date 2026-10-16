@@ -12,6 +12,9 @@ export const GOOGLE_MESSAGES = {
 };
 
 export const VERIFICATION_MESSAGES = {
+  reset_invalid: "This password reset link is invalid or no longer works. Request a new link.",
+  reset_expired: "This password reset link has expired. Request a new link.",
+  reset_used: "This password reset link has already been used. Sign in or request a new link.",
   current_password_invalid: "The current password is incorrect. Please try again.",
   current_password_required: "Confirm your current password to make this change.",
   account_verification_required: "Enter a valid confirmation code from your email. Codes expire after 10 minutes and can only be used once. Request a new code if needed.",
