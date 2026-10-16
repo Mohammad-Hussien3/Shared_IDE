@@ -64,93 +64,96 @@ export default function AuthPage({ register = false }) {
     }
   };
   return (
-    <main className={`ide-shell account-shell theme-${theme}`}>
+    <main className={`ide-shell account-shell auth-entry-shell theme-${theme}`}>
       <div className="account-topbar">
         <span className="brand">
           <Code2 size={20} /> Workspace
         </span>
         <ThemeButton theme={theme} onClick={toggleTheme} />
       </div>
-      <form className="auth-card" onSubmit={submit}>
-        <span className="brand-mark">
-          <Code2 size={25} />
-        </span>
-        <h1>{register ? "Create your account" : "Welcome back"}</h1>
-        <p>
-          {register
-            ? "A private space for your code and ideas."
-            : "Sign in to your workspaces."}
-        </p>
-        <GoogleButton onClick={startGoogle} disabled={pending || googlePending} pending={googlePending} />
-        <div className="auth-divider">or use your password</div>
-        <label className="field-label">
-          Username
-          <input
-            autoComplete="username"
-            required
-            maxLength={register ? 150 : 254}
-            placeholder={register ? undefined : "Username or email address"}
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            disabled={pending || googlePending}
-          />
-        </label>
-        {register && (
-          <label className="field-label">Email address
-            <input type="email" autoComplete="email" required maxLength={254} value={email}
-              onChange={event => setEmail(event.target.value)} disabled={pending || googlePending} />
-          </label>
-        )}
-        <label className="field-label">
-          Password
-          <input
-            type="password"
-            autoComplete={register ? "new-password" : "current-password"}
-            required
-            maxLength={128}
-            minLength={register ? 8 : undefined}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            disabled={pending || googlePending}
-          />
-        </label>
-        {register && (
+      <div className="auth-entry-content">
+        <form className="auth-card auth-entry-card" onSubmit={submit} aria-labelledby="auth-title">
+          <header className="auth-entry-heading">
+            <span className="brand-mark" aria-hidden="true">
+              <Code2 size={25} />
+            </span>
+            <h1 id="auth-title">{register ? "Create your account" : "Welcome back"}</h1>
+            <p>
+              {register
+                ? "Give your next idea a home. Your workspace awaits."
+                : "Your ideas are right where you left them. Let’s get back to building."}
+            </p>
+          </header>
           <label className="field-label">
-            Confirm password
+            Username
             <input
-              type="password"
-              autoComplete="new-password"
+              autoComplete="username"
               required
-              maxLength={128}
-              value={confirmation}
-              onChange={(e) => setConfirmation(e.target.value)}
+              maxLength={register ? 150 : 254}
+              placeholder={register ? undefined : "Username or email address"}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               disabled={pending || googlePending}
             />
           </label>
-        )}
-        {register && (
-          <p className="auth-hint">
-            Use at least 8 characters. Avoid common passwords and personal
-            information.
+          {register && (
+            <label className="field-label">Email address
+              <input type="email" autoComplete="email" required maxLength={254} value={email}
+                onChange={event => setEmail(event.target.value)} disabled={pending || googlePending} />
+            </label>
+          )}
+          <label className="field-label">
+            Password
+            <input
+              type="password"
+              autoComplete={register ? "new-password" : "current-password"}
+              required
+              maxLength={128}
+              minLength={register ? 8 : undefined}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={pending || googlePending}
+            />
+          </label>
+          {register && (
+            <label className="field-label">
+              Confirm password
+              <input
+                type="password"
+                autoComplete="new-password"
+                required
+                maxLength={128}
+                value={confirmation}
+                onChange={(e) => setConfirmation(e.target.value)}
+                disabled={pending || googlePending}
+              />
+            </label>
+          )}
+          {register && (
+            <p className="auth-hint">
+              Use at least 8 characters. Avoid common passwords and personal
+              information.
+            </p>
+          )}
+          {(error || sessionError) && (
+            <div className="inline-error" role="alert">
+              {error || sessionError}
+            </div>
+          )}
+          <button type="submit" className="button button-primary" disabled={pending || googlePending} aria-busy={pending}>
+            {pending && <LoaderCircle size={15} className="spin" />}
+            {pending ? "Please wait…" : register ? "Create account" : "Log in"}
+          </button>
+          <div className="auth-divider">or continue with</div>
+          <GoogleButton onClick={startGoogle} disabled={pending || googlePending} pending={googlePending} />
+          <p className="auth-entry-footer">
+            {register ? "Already have an account? " : "New here? "}
+            <Link to={register ? "/login" : "/register"}>
+              {register ? "Log in" : "Create an account"}
+            </Link>
           </p>
-        )}
-        {(error || sessionError) && (
-          <div className="inline-error" role="alert">
-            {error || sessionError}
-          </div>
-        )}
-        <button className="button button-primary" disabled={pending || googlePending}>
-          {pending && <LoaderCircle size={15} className="spin" />}
-          {pending ? "Please wait…" : register ? "Create account" : "Log in"}
-        </button>
-        <p>
-          {register ? "Already have an account? " : "New here? "}
-          <Link to={register ? "/login" : "/register"}>
-            {register ? "Log in" : "Create an account"}
-          </Link>
-        </p>
-        <Link to="/check-email" state={{ email: register ? email : username.includes('@') ? username : '' }}>Resend verification email</Link>
-      </form>
+        </form>
+      </div>
     </main>
   );
 }
