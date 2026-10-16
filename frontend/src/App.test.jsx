@@ -145,14 +145,14 @@ it("shows login errors and supports login followed by confirmed logout", async (
   mount("/login");
   await screen.findByRole("heading", { name: "Welcome back" });
   failedAuth = true;
-  fill("Username", "alice");
+  fill("Email or username", "alice");
   fill("Password", "wrong");
-  click("Log in");
+  click("Sign in");
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Invalid username or password. Please try again.",
   );
   failedAuth = false;
-  click("Log in");
+  click("Sign in");
   await screen.findByRole("heading", { name: "Your workspaces" });
   click("Log out");
   await screen.findByRole("heading", { name: "Welcome back" });
@@ -304,14 +304,15 @@ it.each([
     return original(url, options);
   });
   mount(`/${action}`);
-  await screen.findByLabelText("Username", { exact: true });
-  fill("Username", "alice");
+  const identifierLabel = action === "register" ? "Username" : "Email or username";
+  await screen.findByLabelText(identifierLabel, { exact: true });
+  fill(identifierLabel, "alice");
   fill("Password", "Secure-password!79");
   if (action === "register") {
     fill("Email address", "alice@example.com");
     fill("Confirm password", "Secure-password!79");
   }
-  click(action === "register" ? "Create account" : "Log in");
+  click(action === "register" ? "Create account" : "Sign in");
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(screen.getByRole("alert")).not.toHaveTextContent(/HTTP|CSRF|Traceback|SECRET|settings\.py|Throttle/);
   expect(screen.queryByRole("heading", { name: "Your workspaces" })).not.toBeInTheDocument();
@@ -365,7 +366,7 @@ it('shows a friendly Google configuration failure and re-enables password login'
   mount('/login');
   fireEvent.click(await screen.findByRole('button', { name: 'Continue with Google' }));
   expect(await screen.findByRole('alert')).toHaveTextContent("Google sign-in isn't available yet. Please use your username and password.");
-  expect(screen.getByRole('button', { name: 'Log in', exact: true })).toBeEnabled();
+  expect(screen.getByRole('button', { name: 'Sign in', exact: true })).toBeEnabled();
   expect(navigateToProvider).not.toHaveBeenCalled();
 });
 

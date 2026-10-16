@@ -14,6 +14,7 @@ import WorkspaceDashboard from "./pages/WorkspaceDashboard";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import { CheckEmailPage, VerifyEmailPage } from "./pages/EmailVerificationPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPage";
+import AuthCelebration from "./components/AuthCelebration";
 import "./App.css";
 import "./accounts.css";
 
@@ -45,7 +46,7 @@ export function AppRoutes() {
       </main>
     );
   return (
-    <Routes>
+    <><AuthCelebration /><Routes>
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/check-email" element={<CheckEmailPage />} />
@@ -71,7 +72,7 @@ export function AppRoutes() {
         }
       />
       <Route path="*" element={<Navigate to="/workspaces" replace />} />
-    </Routes>
+    </Routes></>
   );
 }
 
