@@ -12,6 +12,11 @@ export const GOOGLE_MESSAGES = {
 };
 
 export const VERIFICATION_MESSAGES = {
+  current_password_invalid: "The current password is incorrect. Please try again.",
+  current_password_required: "Confirm your current password to make this change.",
+  account_verification_required: "Enter a valid confirmation code from your email. Codes expire after 10 minutes and can only be used once. Request a new code if needed.",
+  account_code_cooldown: "Please wait 60 seconds before requesting another code.",
+  account_email_failed: "We couldn't send your confirmation code. Please try again shortly.",
   email_unverified: "Please verify your email first. Check your inbox or request a new verification email.",
   verification_invalid: "This verification link is invalid. Request a new verification email.",
   verification_expired: "This verification link has expired. Request a new verification email.",
@@ -43,6 +48,7 @@ export const ERROR_MESSAGES = {
 };
 
 const FIELD_LABELS = {
+  current_password: "Current password", verification_code: "Confirmation code",
   email: "Email address",
   username: "Username", password: "Password", confirm_password: "Password confirmation",
   name: "Name", content: "File content", language: "Language", parent: "Parent folder", folder: "Folder",

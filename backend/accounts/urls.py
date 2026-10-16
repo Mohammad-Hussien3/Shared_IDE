@@ -1,8 +1,12 @@
 from django.urls import path
 from .views import CSRFView, RegisterView, LoginView, LogoutView, RefreshView, MeView, VerifyEmailView, ResendVerificationView
 from .google_views import GoogleStartView, GoogleLinkView, GoogleCallbackView
+from .account_views import AccountVerificationView, UsernameView, PasswordView
 
 urlpatterns = [
+    path('account/verification/', AccountVerificationView.as_view(), name='auth-account-verification'),
+    path('account/username/', UsernameView.as_view(), name='auth-account-username'),
+    path('account/password/', PasswordView.as_view(), name='auth-account-password'),
     path('google/start/', GoogleStartView.as_view(), name='auth-google-start'),
     path('google/link/', GoogleLinkView.as_view(), name='auth-google-link'),
     path('google/callback/', GoogleCallbackView.as_view(), name='auth-google-callback'),

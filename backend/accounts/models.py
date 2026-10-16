@@ -45,3 +45,15 @@ class EmailVerification(models.Model):
     token_hash = models.CharField(max_length=64, unique=True, null=True)
     expires_at = models.DateTimeField(null=True)
     sent_at = models.DateTimeField(null=True)
+
+
+class AccountVerification(models.Model):
+    """Single-use email proof for a passwordless user's current session."""
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    session = models.ForeignKey(AuthSession, on_delete=models.CASCADE)
+    code_hash = models.CharField(max_length=64)
+    email = models.EmailField(max_length=254)
+    expires_at = models.DateTimeField()
+    sent_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { LogOut, Moon, Sun } from "lucide-react";
+import { LogOut, Moon, Sun, UserRound } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth/context";
 import { getErrorMessage } from "../lib/errors";
 
@@ -33,6 +34,9 @@ export default function AccountControls() {
       <span className="account-name" title={user?.username}>
         {user?.username}
       </span>
+      <Link className="icon-button" to="/account" aria-label="Account settings" title="Account settings">
+        <UserRound size={17} />
+      </Link>
       <button className="button" onClick={logout} disabled={pending}>
         <LogOut size={14} />
         {pending ? "Logging out…" : "Log out"}

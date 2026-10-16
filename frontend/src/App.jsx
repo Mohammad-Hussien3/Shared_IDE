@@ -9,6 +9,7 @@ import {
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/context";
 import AuthPage from "./pages/AuthPage";
+import AccountSettingsPage from "./pages/AccountSettingsPage";
 import WorkspaceDashboard from "./pages/WorkspaceDashboard";
 import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import { CheckEmailPage, VerifyEmailPage } from "./pages/EmailVerificationPage";
@@ -49,6 +50,7 @@ export function AppRoutes() {
       <Route path="/auth/google/callback" element={<GoogleCallbackPage />} />
       <Route path="/login" element={<AuthPage key="login" />} />
       <Route path="/register" element={<AuthPage key="register" register />} />
+      <Route path="/account" element={<Protected><AccountSettingsPage key={user?.id} /></Protected>} />
       <Route
         path="/workspaces"
         element={

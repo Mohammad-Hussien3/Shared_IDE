@@ -1,0 +1,7 @@
+Confirm your Shared IDE account change
+
+Your confirmation code is: {{ code }}
+
+Enter this code in Account Settings to confirm a username change or set your first password. It expires in 10 minutes and can be used only once, in the browser session that requested it.
+
+If you did not request this change, do not share this code. Your account has not been changed.

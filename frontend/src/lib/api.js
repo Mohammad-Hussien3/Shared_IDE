@@ -30,6 +30,7 @@ export function createAuthClient() {
   let csrf = null;
   let refreshPromise = null;
   let csrfPromise = null;
+  let accountPromise = null;
   let generation = 0;
   let userId = null;
   let loggingOut = false;
@@ -130,6 +131,25 @@ export function createAuthClient() {
     if (!access || expires * 1000 < Date.now() + 15000) return refresh();
     return access;
   };
+  const sendAccountRequest = async (action, body) => {
+    if (refreshPromise) await refreshPromise;
+    const version = generation;
+    const token = await getAccessToken();
+    if (version !== generation || loggingOut) throw new UserFacingError(ERROR_MESSAGES.session);
+    const data = await authRequest(`account/${action}`, body, token);
+    if (version !== generation || loggingOut) throw new UserFacingError(ERROR_MESSAGES.session);
+    if (data.access) {
+      // Reject late responses from the old session after credential rotation.
+      generation += 1;
+      acceptSession(data);
+    } else if (data.user) changed(data.user);
+    return data;
+  };
+  const accountRequest = (action, body = {}) => {
+    if (accountPromise) return Promise.reject(new UserFacingError("Please wait for your account change to finish."));
+    accountPromise = sendAccountRequest(action, body).finally(() => { accountPromise = null; });
+    return accountPromise;
+  };
   return {
     subscribe(listener) {
       changed = listener;
@@ -141,6 +161,16 @@ export function createAuthClient() {
     getAccessToken,
     verifyEmail: (token) => authRequest("verify-email", { token }),
     resendVerification: (email) => authRequest("resend-verification", { email }),
+    requestAccountVerification: () => accountRequest("verification"),
+    updateUsername: (body) => accountRequest("username", body),
+    updatePassword: (body) => accountRequest("password", body),
+    async loadAccount() {
+      const version = generation;
+      const data = await responseData(await this.fetch(`${API_BASE_URL}/auth/me/`));
+      if (version !== generation || loggingOut) throw new UserFacingError(ERROR_MESSAGES.session);
+      changed(data);
+      return data;
+    },
     async startGoogle(password) {
       if (refreshPromise) await refreshPromise.catch(() => {});
       const link = password !== undefined;
@@ -168,6 +198,9 @@ export function createAuthClient() {
     async logout() {
       loggingOut = true;
       try {
+        // A password update may set a replacement cookie. Revoke it after that
+        // response arrives, so a late save cannot restore a logged-out session.
+        if (accountPromise) await accountPromise.catch(() => {});
         if (refreshPromise) await refreshPromise.catch(() => {});
         await authRequest("logout", {}, access);
         generation += 1;

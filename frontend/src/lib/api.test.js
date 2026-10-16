@@ -12,6 +12,49 @@ const session = (access = token()) => ({
 });
 
 describe("authentication HTTP client", () => {
+  it('waits for a pending password response before logout revokes its replacement cookie', async () => {
+    const gate = deferred();
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response(session()))
+      .mockReturnValueOnce(gate.promise).mockResolvedValueOnce(response({}, 204));
+    const client = createAuthClient();
+    const changed = vi.fn();
+    client.subscribe(changed);
+    await client.authenticate('login', {});
+    const saving = client.updatePassword({ password: 'new-secret', confirm_password: 'new-secret' });
+    const rejection = expect(saving).rejects.toThrow('Your session has expired.');
+    // Let the request reach the server before logout is requested.
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    const loggingOut = client.logout();
+    expect(fetch.mock.calls.some(([url]) => url.endsWith('/auth/logout/'))).toBe(false);
+    gate.resolve(response(session(token('replacement'))));
+    await rejection;
+    await loggingOut;
+    expect(fetch.mock.calls[3][0]).toBe('http://api.test/api/auth/logout/');
+    expect(changed).toHaveBeenLastCalledWith(null);
+  });
+  it('sends account changes with JWT and CSRF, and publishes the updated user', async () => {
+    const initial = session();
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response(initial))
+      .mockResolvedValueOnce(response({ user: { id: 1, username: 'renamed' } }));
+    const client = createAuthClient();
+    const changed = vi.fn();
+    client.subscribe(changed);
+    await client.authenticate('login', {});
+    await client.updateUsername({ username: 'renamed', current_password: 'secret' });
+    expect(fetch.mock.calls[2]).toEqual(['http://api.test/api/auth/account/username/', expect.objectContaining({
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'rotated-csrf', Authorization: `Bearer ${initial.access}` },
+    })]);
+    expect(changed).toHaveBeenLastCalledWith({ id: 1, username: 'renamed' });
+  });
+  it('accepts the replacement session after a password change', async () => {
+    const replacement = session(token('replacement'));
+    fetch.mockResolvedValueOnce(response({ csrf: 'csrf' })).mockResolvedValueOnce(response(session()))
+      .mockResolvedValueOnce(response(replacement));
+    const client = createAuthClient();
+    await client.authenticate('login', {});
+    await client.updatePassword({ password: 'new-secret', confirm_password: 'new-secret', current_password: 'old-secret' });
+    expect(await client.getAccessToken()).toBe(replacement.access);
+  });
   it('registration returns the check-email response without accepting a session', async () => {
     fetch.mockResolvedValueOnce(response({ csrf: 'csrf' }))
       .mockResolvedValueOnce(response({ detail: 'Check your email' }, 201));

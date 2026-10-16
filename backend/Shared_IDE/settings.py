@@ -117,7 +117,10 @@ EMAIL_TIMEOUT = int(os.getenv('EMAIL_TIMEOUT', '10'))
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ['accounts.authentication.SessionJWTAuthentication'],
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
-    'DEFAULT_THROTTLE_RATES': {'auth': '30/minute', 'verification_resend': '5/hour'},
+    'DEFAULT_THROTTLE_RATES': {
+        'auth': '30/minute', 'verification_resend': '5/hour',
+        'account_changes': '10/minute', 'account_email': '5/hour',
+    },
 }
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),

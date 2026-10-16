@@ -12,7 +12,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = get_user_model()
-        fields = ['id', 'username', 'google_connected', 'has_password']
+        fields = ['id', 'username', 'email', 'google_connected', 'has_password']
         read_only_fields = fields
 
 
@@ -57,3 +57,28 @@ class ResendVerificationSerializer(serializers.Serializer):
 
 class VerifyEmailSerializer(serializers.Serializer):
     token = serializers.CharField(max_length=128, trim_whitespace=False)
+
+
+class AccountProofSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True, required=False, trim_whitespace=False, max_length=128)
+    verification_code = serializers.RegexField(r'^[0-9]{8}$', write_only=True, required=False, max_length=8)
+
+
+class UsernameSerializer(AccountProofSerializer, serializers.ModelSerializer):
+    class Meta:
+        model = get_user_model()
+        fields = ['username', 'current_password', 'verification_code']
+
+
+class PasswordSerializer(AccountProofSerializer):
+    password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+    confirm_password = serializers.CharField(write_only=True, trim_whitespace=False, max_length=128)
+
+    def validate(self, attrs):
+        if attrs['password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'Passwords do not match.'})
+        try:
+            password_validation.validate_password(attrs['password'], self.context['user'])
+        except ValidationError as exc:
+            raise serializers.ValidationError({'password': exc.messages})
+        return attrs
