@@ -65,12 +65,12 @@ class GoogleCallbackView(CookieAuthView):
             if not code or len(code) > 4096:
                 raise google.GoogleAuthError('google_failed')
             linking_user = google.link_user(request, attempt) if attempt.link_session_id else None
-            subject, email = google.exchange_identity(code, attempt)
+            subject, email, name = google.exchange_identity(code, attempt)
             # Recheck after the network exchange: logout/password changes revoke linking.
             if linking_user:
                 attempt.refresh_from_db()
                 linking_user = google.link_user(request, attempt)
-            user = google.resolve_user(subject, email, linking_user)
+            user = google.resolve_user(subject, email, linking_user, name=name)
             result = 'google_linked' if linking_user else 'google_success'
         except google.GoogleAuthError as exc:
             result = exc.code

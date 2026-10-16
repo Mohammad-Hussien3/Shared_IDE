@@ -9,7 +9,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import IntegrityError
-from django.test import override_settings
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from joserfc import jwt
 from joserfc.jwk import RSAKey
@@ -19,6 +19,49 @@ from rest_framework.test import APIClient, APITestCase
 from accounts import google
 from accounts.models import AuthSession, GoogleAuthAttempt, GoogleIdentity
 from workspace.models import Workspace
+
+
+class GoogleUsernameTests(TestCase):
+    def create_user(self, name):
+        number = GoogleIdentity.objects.count() + 1
+        user = google.resolve_user(f'subject-{number}', f'user{number}@example.com', name=name)
+        field = user._meta.get_field('username')
+        field.run_validators(user.username)
+        self.assertFalse(user.has_usable_password())
+        return user
+
+    def test_duplicate_names_get_numbered_suffixes(self):
+        existing = get_user_model().objects.create_user('mohammad_hussein', password='Existing-password!42')
+        self.assertEqual(self.create_user('Mohammad Hussein').username, 'mohammad_hussein2')
+        self.assertEqual(self.create_user('Mohammad Hussein').username, 'mohammad_hussein3')
+        existing.refresh_from_db()
+        self.assertTrue(existing.check_password('Existing-password!42'))
+
+    def test_existing_name_with_different_case_is_avoided(self):
+        get_user_model().objects.create_user('Mohammad_Hussein')
+        self.assertEqual(self.create_user('Mohammad Hussein').username, 'mohammad_hussein2')
+
+    def test_missing_empty_and_unusable_names_get_unique_fallbacks(self):
+        for index, name in enumerate([None, '', '   ', '✨!!!', 123, {}], start=1):
+            with self.subTest(name=name):
+                suffix = str(index) if index > 1 else ''
+                self.assertEqual(self.create_user(name).username, f'google_user{suffix}')
+
+    def test_special_characters_whitespace_and_unicode(self):
+        for name, expected in [
+            ('  Mohammad\t Hussein\n', 'mohammad_hussein'),
+            ("Renée O’Connor! ✨", 'renée_oconnor'),
+            ('Jean-Luc / Smith', 'jean-luc__smith'),
+            ('محمد حسين', 'محمد_حسين'),
+            ('Ｍｏｈａｍｍａｄ', 'mohammad'),
+        ]:
+            with self.subTest(name=name):
+                self.assertEqual(self.create_user(name).username, expected)
+
+    def test_long_names_reserve_room_for_unique_suffix(self):
+        limit = get_user_model()._meta.get_field('username').max_length
+        self.assertEqual(self.create_user('A' * (limit + 20)).username, 'a' * limit)
+        self.assertEqual(self.create_user('A' * (limit + 20)).username, 'a' * (limit - 1) + '2')
 
 
 @override_settings(
@@ -99,7 +142,7 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertEqual(self.client.get('/api/auth/google/start/').status_code, 405)
         self.assertEqual(self.client.post('/api/auth/google/start/', {}).status_code, 403)
         result = self.start()
-        self.assertEqual(self.params['scope'], 'openid email')
+        self.assertEqual(self.params['scope'], 'openid email profile')
         self.assertEqual(self.params['response_type'], 'code')
         self.assertEqual(self.params['redirect_uri'], settings.GOOGLE_REDIRECT_URI)
         self.assertEqual(self.params['code_challenge_method'], 'S256')
@@ -117,10 +160,11 @@ class GoogleAuthenticationTests(APITestCase):
 
     def test_first_login_creates_user_cookie_session_and_owned_workspace(self):
         self.start()
-        response = self.callback()
+        response = self.callback({'name': 'Mohammad Hussein'})
         self.assert_result(response, 'google_success')
         user = get_user_model().objects.get()
         self.assertFalse(user.has_usable_password())
+        self.assertEqual(user.username, 'mohammad_hussein')
         self.assertEqual(user.email, 'new@example.com')
         self.assertEqual(GoogleIdentity.objects.get().user, user)
         self.assertEqual(GoogleIdentity.objects.get().subject, 'google-stable-subject')
@@ -145,7 +189,9 @@ class GoogleAuthenticationTests(APITestCase):
         stranger = get_user_model().objects.create_user('stranger', email='new@example.com')
         private = Workspace.objects.create(owner=stranger, name='Other project')
         self.start()
-        self.assert_result(self.callback(), 'google_success')
+        self.assert_result(self.callback({'name': 'Changed Profile Name'}), 'google_success')
+        user.refresh_from_db()
+        self.assertEqual(user.username, 'owner')
         self.csrf = self.client.get('/api/auth/csrf/').data['csrf']
         restored = self.post('refresh')
         self.assertEqual(restored.data['user']['id'], user.pk)
@@ -153,6 +199,13 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertEqual([item['id'] for item in self.client.get('/api/workspaces/').data], [str(workspace.pk)])
         self.assertEqual(self.client.get(f'/api/workspaces/{private.pk}/').status_code, 404)
         self.assertEqual(get_user_model().objects.count(), 2)
+
+    def test_missing_profile_name_still_signs_in(self):
+        self.start()
+        self.assert_result(self.callback(), 'google_success')
+        user = get_user_model().objects.get()
+        self.assertEqual(user.username, 'google_user')
+        self.assertFalse(user.has_usable_password())
 
     def test_invalid_signed_claims_never_create_a_session(self):
         cases = [
@@ -270,7 +323,9 @@ class GoogleAuthenticationTests(APITestCase):
         project = Workspace.objects.create(owner=owner, name='Keep this')
         self.login_password(owner)
         self.start('google/link', {'password': self.password})
-        self.assert_result(self.callback(), 'google_linked')
+        self.assert_result(self.callback({'name': 'Different Google Name'}), 'google_linked')
+        owner.refresh_from_db()
+        self.assertEqual(owner.username, 'owner')
         self.assertEqual(GoogleIdentity.objects.get().user, owner)
         self.assertEqual(get_user_model().objects.count(), 1)
         project.refresh_from_db()

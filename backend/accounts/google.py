@@ -1,5 +1,6 @@
 """Google authorization code flow. All OAuth tokens stay on the backend."""
 import hashlib
+import re
 import secrets
 from datetime import timedelta
 from urllib.parse import urlsplit
@@ -65,7 +66,7 @@ def digest(value):
 def oauth_client():
     return OAuth2Session(
         settings.GOOGLE_CLIENT_ID, settings.GOOGLE_CLIENT_SECRET,
-        scope='openid email', redirect_uri=settings.GOOGLE_REDIRECT_URI,
+        scope='openid email profile', redirect_uri=settings.GOOGLE_REDIRECT_URI,
         code_challenge_method='S256', token_endpoint_auth_method='client_secret_post',
     )
 
@@ -147,7 +148,7 @@ def exchange_identity(code, attempt):
         validate_email(email)
     except ValidationError:
         raise GoogleAuthError('google_failed') from None
-    return subject, email
+    return subject, email, claims.get('name')
 
 
 def link_user(request, attempt):
@@ -162,7 +163,27 @@ def link_user(request, attempt):
     return session.user
 
 
-def resolve_user(subject, email, user_to_link=None):
+def create_google_user(email, name):
+    User = get_user_model()
+    name = User.normalize_username(name if isinstance(name, str) else '').lower()
+    base = re.sub(r'[^\w-]', '', re.sub(r'\s+', '_', name)).strip('_-') or 'google_user'
+    max_length = User._meta.get_field('username').max_length
+    number = 1
+    while True:
+        suffix = str(number) if number > 1 else ''
+        username = base[:max_length - len(suffix)] + suffix
+        if not User.objects.filter(username__iexact=username).exists():
+            try:
+                # A savepoint allows retrying if another signup takes this name.
+                with transaction.atomic():
+                    return User.objects.create_user(username=username, email=email, password=None)
+            except IntegrityError:
+                if not User.objects.filter(username__iexact=username).exists():
+                    raise
+        number += 1
+
+
+def resolve_user(subject, email, user_to_link=None, *, name=None):
     User = get_user_model()
     try:
         with transaction.atomic():
@@ -180,8 +201,7 @@ def resolve_user(subject, email, user_to_link=None):
                 return identity.user
             if User.objects.filter(email__iexact=email).exists():
                 raise GoogleAuthError('google_account_exists')
-            # An opaque unique username avoids treating Google's email as an ID.
-            user = User.objects.create_user(username=f'google_{secrets.token_hex(12)}', email=email, password=None)
+            user = create_google_user(email, name)
             GoogleIdentity.objects.create(subject=subject, user=user)
             return user
     except IntegrityError:
