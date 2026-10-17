@@ -17,6 +17,7 @@ import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPage
 import AuthCelebration from "./components/AuthCelebration";
 import "./App.css";
 import "./accounts.css";
+import "./spark-workspace.css";
 
 function Protected({ children }) {
   const { user } = useAuth();

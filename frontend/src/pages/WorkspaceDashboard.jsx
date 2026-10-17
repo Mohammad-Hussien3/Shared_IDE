@@ -101,7 +101,8 @@ export default function WorkspaceDashboard() {
     <main className={`ide-shell account-shell theme-${theme}`}>
       <header className="account-topbar">
         <span className="brand">
-          <Code2 size={20} /> Workspace
+          <span className="brand-mark"><Code2 size={20} /></span>
+          <strong>Shared_IDE</strong><span className="workspace-lab-label">SPARK LAB</span>
         </span>
         <div className="top-actions">
           <ThemeButton theme={theme} onClick={toggleTheme} />

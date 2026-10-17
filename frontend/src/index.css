@@ -10,11 +10,11 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color-scheme: dark;
-  background: #15181e;
+  background: var(--spark-dark-bg, #100d13);
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  background: #ffffff;
+  background: var(--spark-light-bg, #fffaf6);
 }
 * {
   box-sizing: border-box;
@@ -50,7 +50,7 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid var(--accent, #8fa9ff);
+  outline: 2px solid var(--accent, #ff9a36);
   outline-offset: -2px;
 }
 button {
@@ -60,16 +60,16 @@ svg {
   flex-shrink: 0;
 }
 ::selection {
-  background: #5777c955;
+  background: #ff9a3644;
 }
 ::-webkit-scrollbar {
   width: 8px;
   height: 6px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #7c879533;
+  background: #bfaab733;
   border-radius: 8px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #7c879566;
+  background: #bfaab766;
 }

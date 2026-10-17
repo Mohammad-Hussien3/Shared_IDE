@@ -1,15 +1,15 @@
-/* Spark Lab is scoped to sign-in/sign-up. Other account screens retain their theme. */
+/* Authentication keeps its dark presentation while sharing the application palette. */
 .ide-shell.spark-auth {
-  --bg: #100d13;
-  --surface: #1d1721;
-  --strong: #fff2ed;
-  --muted: #bfaab7;
-  --accent: #ffb16a;
-  --border: #533341;
-  --danger: #ff9bab;
-  --spark-orange: #ff9a36;
-  --spark-coral: #ff445e;
-  --spark-green: #a6d6b4;
+  --bg: var(--spark-dark-bg);
+  --surface: var(--spark-dark-surface);
+  --strong: var(--spark-dark-strong);
+  --muted: var(--spark-dark-muted);
+  --accent: var(--spark-dark-accent-soft);
+  --border: var(--spark-dark-border);
+  --danger: var(--spark-dark-danger);
+  --spark-orange: var(--spark-dark-accent);
+  --spark-coral: var(--spark-dark-coral);
+  --spark-green: var(--spark-dark-success);
   color-scheme: dark;
   position: relative;
   isolation: isolate;

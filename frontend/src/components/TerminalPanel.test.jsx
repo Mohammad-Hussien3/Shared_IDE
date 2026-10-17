@@ -145,9 +145,9 @@ it("displays problems and forwards selection", () => {
 
 it("applies themes and disposes subscriptions on unmount", () => {
   const { terminal, props, rerender, unmount, ref } = mount({ theme: "light" });
-  expect(terminal.options.theme.background).toBe("#ffffff");
+  expect(terminal.options.theme.background).toBe("#fffaf6");
   rerender(<TerminalPanel ref={ref} {...props} theme="dark" />);
-  expect(terminal.options.theme.background).toBe("#111419");
+  expect(terminal.options.theme.background).toBe("#100d13");
   expect(ref.current.getDimensions()).toEqual({ cols: 80, rows: 24 });
   act(() => ref.current.focus());
   expect(terminal.focus).toHaveBeenCalled();
@@ -156,4 +156,34 @@ it("applies themes and disposes subscriptions on unmount", () => {
   terminal.subscriptions.forEach((subscription) =>
     expect(subscription.dispose).toHaveBeenCalledOnce(),
   );
+});
+
+it("changes Spark themes during execution without resetting output or input subscriptions", () => {
+  const { ref, terminal, props, rerender } = mount({ running: true });
+  act(() => ref.current.write("Enter your name: "));
+  expect(terminal.options.theme.cursor).toBe("#ff9a36");
+  expect(terminal.options.minimumContrastRatio).toBe(4.5);
+  rerender(<TerminalPanel ref={ref} {...props} theme="light" />);
+  expect(terminal.options.theme.background).toBe("#fffaf6");
+  expect(MockTerminal.instances).toHaveLength(1);
+  expect(terminal.dispose).not.toHaveBeenCalled();
+  expect(terminal.reset).not.toHaveBeenCalled();
+  expect(screen.getByTestId("terminal-screen")).toHaveTextContent("Enter your name:");
+  act(() => terminal.input("Spark\r"));
+  expect(props.onInput).toHaveBeenCalledWith("Spark\r");
+});
+
+it("disables cursor animation for reduced motion without interrupting the terminal", () => {
+  const original = window.matchMedia;
+  const query = { matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  window.matchMedia = vi.fn(() => query);
+  try {
+    const { terminal, unmount } = mount();
+    expect(terminal.options.cursorBlink).toBe(false);
+    act(() => { query.matches = false; query.addEventListener.mock.calls[0][1](); });
+    expect(terminal.options.cursorBlink).toBe(true);
+    expect(MockTerminal.instances).toHaveLength(1);
+    unmount();
+    expect(query.removeEventListener).toHaveBeenCalledWith("change", query.addEventListener.mock.calls[0][1]);
+  } finally { window.matchMedia = original; }
 });

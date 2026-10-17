@@ -1,0 +1,180 @@
+/* Shared workspace polish. No transitions on Monaco content or terminal output. */
+.ide-shell:not(.spark-auth) {
+  --action-gradient: linear-gradient(105deg, #ff9a36, #ff6754 65%, #ff5261);
+}
+.ide-shell:not(.spark-auth) .button,
+.ide-shell:not(.spark-auth) .icon-button {
+  transition: background .16s, border-color .16s, color .16s, box-shadow .16s, transform .12s;
+}
+.ide-shell:not(.spark-auth) .button { border-radius: 7px; }
+.ide-shell:not(.spark-auth) .button:active:not(:disabled),
+.ide-shell:not(.spark-auth) .icon-button:active:not(:disabled) { transform: translateY(1px); }
+.ide-shell:not(.spark-auth) .button-primary {
+  color: var(--accent-text);
+  background: var(--action-gradient);
+  border-color: transparent;
+  box-shadow: 0 3px 12px #ff644b16;
+  font-weight: 650;
+}
+.ide-shell:not(.spark-auth) .button-primary:hover:not(:disabled) {
+  color: var(--accent-text);
+  background: var(--action-gradient);
+  box-shadow: 0 3px 18px #ff644b38;
+  filter: brightness(1.05);
+}
+.ide-shell:not(.spark-auth) :is(.button, .icon-button, a, .tree-row, .theme-options button, .context-menu button, .panel-tabs button, .editor-tab button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ide-shell:not(.spark-auth) a { text-underline-offset: 4px; }
+.workspace-lab-label {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 1.5px;
+  white-space: nowrap;
+}
+.topbar { background: var(--surface); border-bottom-color: var(--border-soft); gap: 16px; }
+.topbar .brand { flex: 1 1 auto; }
+.brand-mark { border: 1px solid var(--border); box-shadow: 0 2px 10px var(--shadow); }
+.topbar .brand-mark { flex-shrink: 0; }
+.topbar .workspace-name { max-width: 150px; }
+.topbar .command-search { flex: 0 1 300px; min-width: 130px; }
+.topbar .top-actions { flex: 0 0 auto; }
+.topbar .run-button { min-width: 86px; }
+.run-button kbd { color: var(--accent-text); border-color: #26111b40; opacity: .8; }
+.command-search, .search-field { transition: border-color .16s, box-shadow .16s; }
+.command-search:hover, .search-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent); }
+.activity-bar { border-right-color: var(--border-soft); }
+.activity-bar .icon-button.active::before { width: 3px; }
+.sidebar { border-right-color: var(--border-soft); }
+.sidebar-heading { color: var(--muted); letter-spacing: .9px; font-size: 10px; }
+.workspace-root { margin: 0 6px; padding: 0 5px; border-radius: 6px; }
+.workspace-root.root-selected { background: var(--surface); }
+.workspace-root .toolbar-actions { gap: 3px; }
+.tree-line { border-radius: 5px; transition: background .14s; }
+.tree-line.selected { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent) inset; }
+.tree-line.selected .tree-name { color: var(--strong); }
+.tree-line.selected::before { height: 18px; width: 3px; }
+.folder-icon, .theme-light .folder-icon { color: var(--accent-soft, var(--accent)); }
+.tree-children { animation: appear .17s ease-out; }
+.sidebar-footer { font-size: 10px; }
+.context-menu { background: var(--elevated); border-color: var(--border); border-radius: 10px; padding: 6px; box-shadow: 0 10px 28px var(--shadow); animation: appear .14s ease-out; }
+.context-menu button { border-radius: 5px; }
+.context-menu .danger-text:hover { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); }
+.tab-strip { background: var(--sidebar); border-bottom-color: var(--border-soft); }
+.editor-tab { transition: background .15s, color .15s, border-color .15s; }
+.editor-tab:hover:not(.active-tab) { background: var(--surface); color: var(--text); }
+.editor-tab.active-tab { border-top-color: var(--accent); }
+.editor-tab.active-tab .file-icon { filter: brightness(1.12); }
+.editor-toolbar { background: var(--bg); }
+.dirty-dot { background: var(--accent); }
+.save-indicator[data-status="Saved"] { color: var(--success); }
+.save-indicator[data-status="Saved"] > svg { animation: spark-saved .25s ease-out; }
+@keyframes spark-saved { from { opacity: .4; transform: scale(.8); } to { opacity: 1; transform: scale(1); } }
+.resize-handle::after { transition: background .15s; }
+.resize-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.terminal-panel { border-top-color: var(--border); transition: border-color .18s; }
+.terminal-panel:focus-within { border-top-color: var(--accent); }
+.panel-heading { background: var(--surface); border-bottom: 1px solid var(--border-soft); }
+.panel-tabs > button { transition: color .16s, border-color .16s; }
+.panel-tabs > button.active { color: var(--accent-soft, var(--accent)); }
+.terminal-session { color: var(--muted); }
+.session-tag { border: 1px solid var(--border-soft); color: var(--muted); }
+.is-running .connection-dot { background: var(--accent); }
+.statusbar { background: var(--surface); border-top-color: var(--border-soft); font-size: 10px; }
+.statusbar .save-indicator, .statusbar button { font-size: 10px; }
+.status-file { color: var(--text); }
+.welcome-logo { border-color: var(--border); color: var(--accent); background: var(--surface); box-shadow: 0 12px 45px color-mix(in srgb, var(--accent) 9%, transparent); }
+.welcome-state .eyebrow, .dashboard .eyebrow { color: var(--accent); }
+.toast { background: var(--elevated); border-radius: 10px; border-left: 3px solid var(--success); }
+.toast-error { border-left-color: var(--danger); }
+.resource-dialog { background: var(--elevated); border-radius: 16px; padding: 26px; box-shadow: 0 24px 80px var(--shadow); }
+.resource-dialog[open] { animation: appear .18s ease-out; }
+.resource-dialog::backdrop { background: #100d13aa; backdrop-filter: blur(4px); }
+.ide-shell:not(.spark-auth) .field-label input,
+.ide-shell:not(.spark-auth) .field-label select {
+  border-radius: 7px;
+  color: var(--strong);
+  transition: border-color .16s, box-shadow .16s;
+}
+.ide-shell:not(.spark-auth) .field-label input:focus,
+.ide-shell:not(.spark-auth) .field-label select:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ide-shell:not(.spark-auth) input::placeholder { color: var(--faint); opacity: 1; }
+.ide-shell:not(.spark-auth) input:autofill { -webkit-text-fill-color: var(--strong); box-shadow: 0 0 0 50px var(--inset) inset; }
+.theme-options button.selected { border-color: var(--accent); color: var(--accent); background: var(--selected); }
+.settings-content input[type="range"], .setting-toggle input { accent-color: var(--accent); }
+/* Warm ambient detail stays outside the editing/terminal surfaces. */
+.account-shell:not(.spark-auth) {
+  background: radial-gradient(ellipse at 70% 0%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 55%), var(--bg);
+}
+.account-topbar { background: var(--surface); border-bottom-color: var(--border-soft); }
+.account-topbar .brand { gap: 11px; }
+.account-topbar .brand strong { display: block; font-size: 15px; }
+.account-topbar .top-actions > .icon-button { display: inline-flex; }
+.account-topbar .workspace-lab-label { padding-left: 12px; border-left: 1px solid var(--border); }
+.dashboard { margin-top: 48px; }
+.dashboard-heading h1 { font-size: 30px; font-weight: 600; }
+.dashboard-heading p { line-height: 1.7; }
+.dashboard-heading .button-primary { height: 38px; padding: 0 16px; }
+.workspace-grid { gap: 20px; }
+.workspace-card { position: relative; border-radius: 14px; border-color: var(--border-soft); padding: 24px 22px 16px; box-shadow: 0 5px 18px var(--shadow); transition: border-color .18s, box-shadow .18s, transform .18s; }
+.workspace-card:hover, .workspace-card:focus-within { border-color: var(--accent); box-shadow: 0 8px 28px var(--shadow); transform: translateY(-2px); }
+.workspace-card-icon { box-sizing: content-box; padding: 10px; background: var(--selected); border: 1px solid var(--border-soft); border-radius: 11px; color: var(--accent); }
+.workspace-card-link { font-size: 18px; margin-top: 18px; }
+.workspace-card-footer { padding-top: 12px; border-top: 1px solid var(--border-soft); font-size: 11px; }
+.dashboard-notice { padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--success) 30%, transparent); border-radius: 9px; background: color-mix(in srgb, var(--success) 6%, var(--bg)); animation: appear .2s ease-out; }
+.account-settings-card, .account-confirmation { border-color: var(--border-soft); border-radius: 16px; background: var(--surface); }
+.account-section-title > svg { padding: 8px; box-sizing: content-box; background: var(--selected); border-radius: 10px; }
+.account-settings .account-section-title { margin-bottom: 22px; }
+.account-settings .account-success, .account-settings .inline-error { padding: 10px 12px; border-radius: 8px; background: var(--inset); }
+.account-settings .account-success { border-left: 2px solid var(--success); }
+.account-settings .inline-error { border-left: 2px solid var(--danger); }
+.account-settings .account-password-input .icon-button { top: 8px; }
+.auth-entry-card { border-radius: 18px; box-shadow: 0 18px 48px var(--shadow); }
+.account-error { background: var(--elevated); border-radius: 8px; box-shadow: 0 8px 24px var(--shadow); }
+/* Language icons retain their identities and have separate readable light colors. */
+.theme-light .file-icon.language-python, .theme-light .file-icon.language-typescript { color: #245c9c; }
+.theme-light .file-icon.language-javascript, .theme-light .file-icon.language-json { color: #80520d; }
+.theme-light .file-icon.language-c, .theme-light .file-icon.language-cpp, .theme-light .file-icon.language-java { color: #79459d; }
+.theme-light .file-icon.language-html, .theme-light .file-icon.language-rust { color: #a44d28; }
+.theme-light .file-icon.language-css { color: #79459d; }
+.theme-light .file-icon.language-shell, .theme-light .file-icon.language-bash { color: #1e6d71; }
+@media (max-width: 1100px) {
+  .topbar .workspace-lab-label { display: none; }
+  .topbar .command-search { flex-basis: 180px; }
+}
+@media (max-width: 760px) {
+  .account-topbar .workspace-lab-label { display: none; }
+  .topbar .command-search { display: none; }
+  .topbar .top-actions { gap: 4px; }
+  .topbar .brand { min-width: 0; }
+  .topbar .workspace-name { max-width: 110px; }
+  .topbar .run-button { min-width: 58px; padding: 0 9px; }
+  .dashboard-heading h1 { font-size: 27px; }
+  .account-topbar { padding: 0 16px; }
+}
+@media (max-width: 480px) {
+  .topbar .top-divider, .topbar .workspace-name { display: none; }
+  .topbar .account-controls .button { padding: 0 7px; font-size: 10px; }
+  .topbar .save-button { padding: 0 8px; }
+  .topbar .dashboard-link { font-size: 10px; }
+  .account-topbar .brand { gap: 7px; }
+  .account-topbar .brand strong { font-size: 12px; }
+  .account-topbar .brand-mark { width: 25px; height: 25px; }
+  .statusbar, .statusbar .save-indicator, .statusbar button { font-size: 9px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ide-shell:not(.spark-auth) :is(.button, .icon-button, .tree-children, .context-menu, .editor-tab, .terminal-panel, .toast, .resource-dialog, .dashboard-notice, .workspace-card, .save-indicator > svg) {
+    animation: none !important;
+    transition: none !important;
+  }
+  .ide-shell:not(.spark-auth) .button:active, .ide-shell:not(.spark-auth) .icon-button:active,
+  .workspace-card:hover, .workspace-card:focus-within { transform: none; }
+}

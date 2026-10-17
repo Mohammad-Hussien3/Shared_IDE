@@ -22,25 +22,9 @@ import {
 } from "lucide-react";
 import { IconButton, ResizeHandle } from "./IdePrimitives";
 import "@xterm/xterm/css/xterm.css";
+import { TERMINAL_THEMES as THEMES } from "../lib/editorThemes";
+import useReducedMotion from "../lib/useReducedMotion";
 
-const THEMES = {
-  dark: {
-    background: "#111419",
-    foreground: "#c9d1dd",
-    cursor: "#8fa9ff",
-    selectionBackground: "#5269a755",
-    red: "#f08080",
-    green: "#87cfa8",
-  },
-  light: {
-    background: "#ffffff",
-    foreground: "#354052",
-    cursor: "#4869cc",
-    selectionBackground: "#b9caff88",
-    red: "#c13c46",
-    green: "#237b52",
-  },
-};
 // Terminal output intentionally contains ANSI control sequences.
 const stripAnsi = (text) =>
   // eslint-disable-next-line no-control-regex
@@ -71,6 +55,7 @@ const TerminalPanel = forwardRef(function TerminalPanel(
   const [collapsed, setCollapsed] = useState(false);
   const [maximized, setMaximized] = useState(false);
   const [output, setOutput] = useState("");
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     handlersRef.current = { onInput, onResize };
@@ -122,6 +107,7 @@ const TerminalPanel = forwardRef(function TerminalPanel(
       fontSize: 12,
       lineHeight: 1.45,
       scrollback: 3000,
+      minimumContrastRatio: 4.5,
       theme: THEMES.dark,
       allowProposedApi: false,
     });
@@ -165,6 +151,10 @@ const TerminalPanel = forwardRef(function TerminalPanel(
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = THEMES[theme];
   }, [theme]);
+
+  useEffect(() => {
+    if (terminalRef.current) terminalRef.current.options.cursorBlink = !reducedMotion;
+  }, [reducedMotion]);
 
   const toggleMaximize = () => {
     const next = !maximized;

@@ -563,7 +563,7 @@ describe("saving and execution lifecycle", () => {
     localStorage.setItem("ide-theme", "light");
     const view = await mount();
     expect(document.documentElement.dataset.theme).toBe("light");
-    expect(terminal().options.theme.background).toBe("#ffffff");
+    expect(terminal().options.theme.background).toBe("#fffaf6");
     click("Switch to dark theme");
     expect(localStorage.getItem("ide-theme")).toBe("dark");
     view.unmount();

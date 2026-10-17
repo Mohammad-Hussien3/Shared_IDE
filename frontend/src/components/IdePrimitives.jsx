@@ -52,6 +52,7 @@ export function SaveIndicator({ status = "Saved" }) {
   return (
     <span
       className={`save-indicator ${status === "Unsaved" ? "is-dirty" : ""}`}
+      data-status={status}
     >
       {status === "Saving…" ? (
         <LoaderCircle size={12} className="spin" />

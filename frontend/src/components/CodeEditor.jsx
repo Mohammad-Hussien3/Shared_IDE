@@ -1,8 +1,10 @@
 import Editor from "@monaco-editor/react";
 import { useEffect } from "react";
 import { monaco } from "../lib/monaco";
+import useReducedMotion from "../lib/useReducedMotion";
 
 export default function CodeEditor({ workspaceId, ...props }) {
+  const reducedMotion = useReducedMotion();
   useEffect(
     () => () => {
       const prefix = `file:///${workspaceId}/`;
@@ -13,5 +15,8 @@ export default function CodeEditor({ workspaceId, ...props }) {
     },
     [workspaceId],
   );
-  return <Editor {...props} />;
+  return <Editor {...props} options={{ ...props.options,
+    smoothScrolling: reducedMotion ? false : props.options?.smoothScrolling,
+    cursorSmoothCaretAnimation: reducedMotion ? "off" : props.options?.cursorSmoothCaretAnimation,
+  }} />;
 }

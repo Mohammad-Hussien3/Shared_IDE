@@ -58,6 +58,7 @@ import {
   languageFor,
 } from "../lib/ideFiles";
 import "../App.css";
+import { defineEditorThemes } from "../lib/editorThemes";
 
 const Editor = lazy(() => import("../components/CodeEditor"));
 
@@ -873,35 +874,6 @@ export default function WorkspacePage({ workspaceId }) {
       setActionError(true);
     }
   };
-  const defineEditorThemes = (monaco) => {
-    monaco.editor.defineTheme("studio-dark", {
-      base: "vs-dark",
-      inherit: true,
-      rules: [],
-      colors: {
-        "editor.background": "#15181e",
-        "editor.foreground": "#c9d1dd",
-        "editorLineNumber.foreground": "#535d6e",
-        "editorLineNumber.activeForeground": "#c0c9da",
-        "editor.lineHighlightBackground": "#1b2029",
-        "editor.selectionBackground": "#344566",
-        "editorCursor.foreground": "#90aaff",
-        "editorIndentGuide.background1": "#252c38",
-      },
-    });
-    monaco.editor.defineTheme("studio-light", {
-      base: "vs",
-      inherit: true,
-      rules: [],
-      colors: {
-        "editor.background": "#ffffff",
-        "editor.foreground": "#354052",
-        "editorLineNumber.foreground": "#a0a9b6",
-        "editor.lineHighlightBackground": "#f4f6fa",
-        "editor.selectionBackground": "#dce6ff",
-      },
-    });
-  };
   const runDisabled =
     running || loadingFile || Boolean(fileError) || manualSaving;
 
@@ -909,9 +881,10 @@ export default function WorkspacePage({ workspaceId }) {
     <main className={`ide-shell theme-${theme}`}>
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">
+          <span className="brand-mark" title="Shared IDE · Spark Lab">
             <Code2 size={19} />
           </span>
+          <span className="workspace-lab-label">SPARK LAB</span>
           <Link
             className="dashboard-link"
             to="/workspaces"
@@ -950,6 +923,8 @@ export default function WorkspacePage({ workspaceId }) {
             className="button button-primary run-button"
             onClick={runFile}
             disabled={runDisabled}
+            aria-busy={running}
+            title="Save and run the current file (F5)"
           >
             {running ? (
               <LoaderCircle size={14} className="spin" />
@@ -1135,7 +1110,7 @@ export default function WorkspacePage({ workspaceId }) {
                     path={`file:///${workspaceId}/${activeFile.id}`}
                     saveViewState
                     keepCurrentModel
-                    theme={`studio-${theme}`}
+                    theme={`spark-${theme}`}
                     beforeMount={defineEditorThemes}
                     language={languageFor(activeFile)}
                     value={fileContent}
