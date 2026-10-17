@@ -1,4 +1,5 @@
 import { ERROR_MESSAGES, HttpError, UserFacingError } from "./errors";
+import { captureApiFailure } from "./monitoring";
 
 export const API_BASE_URL = (import.meta.env.VITE_API_URL || "/api").replace(
   /\/$/,
@@ -10,6 +11,7 @@ export const WS_BASE_URL = new URL(
 ).href.replace(/^http/, "ws");
 
 export async function responseData(response, context = "general") {
+  captureApiFailure(response.status);
   if (response.status === 204) return {};
   let data;
   try {

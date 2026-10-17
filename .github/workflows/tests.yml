@@ -20,6 +20,8 @@ jobs:
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
       DATABASE_NAME: /tmp/workspace-ci.sqlite3
       RUN_PODMAN_INTEGRATION_TESTS: "0"
+      SENTRY_DSN: ""
+      SENTRY_DISABLED: "true"
     steps:
       - uses: actions/checkout@v7
         with:
@@ -37,6 +39,9 @@ jobs:
   frontend:
     name: Frontend tests and build
     runs-on: ubuntu-latest
+    env:
+      VITE_SENTRY_DSN: ""
+      VITE_SENTRY_DISABLED: "true"
     defaults:
       run:
         working-directory: frontend

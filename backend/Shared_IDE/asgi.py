@@ -19,10 +19,11 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.security.websocket import OriginValidator
 from django.conf import settings
 from workspace.routing import websocket_urlpatterns
+from .monitoring import MonitoredWebSocket
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": OriginValidator(
+    "websocket": MonitoredWebSocket(OriginValidator(
         URLRouter(websocket_urlpatterns), settings.CORS_ALLOWED_ORIGINS
-    ),
+    )),
 })

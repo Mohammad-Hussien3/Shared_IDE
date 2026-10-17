@@ -2,6 +2,10 @@
 
 React + Vite, Monaco Editor, xterm, and Lucide icons. Monaco and its language workers are served from local Vite assets and loaded when an editor is opened. The frontend uses the existing Django workspace CRUD APIs and interactive execution WebSocket.
 
+Optional Sentry monitoring is disabled unless a DSN is configured. See
+[Monitoring configuration and privacy](../MONITORING.md) for separate frontend/backend
+projects, deployment labels, sampling, and the data intentionally excluded from reports.
+
 ## Development
 
 ```sh

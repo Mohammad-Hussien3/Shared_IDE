@@ -9,6 +9,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import TokenError
 
 from accounts.authentication import authenticate_access_token
+from Shared_IDE.monitoring import capture_unexpected
 
 from .execution import SUPPORTED_RUNNERS, detect_language
 from .interactive_runner import INTERACTIVE_TIMEOUT_SECONDS, InteractiveRunner
@@ -54,7 +55,8 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             return await self._saved_file() is not None
         except (AuthenticationFailed, TokenError, ValueError, ValidationError):
             return False
-        except Exception:
+        except Exception as exc:
+            capture_unexpected(exc, 'websocket')
             logger.exception('Could not verify terminal access')
             return False
 
@@ -168,16 +170,23 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             await self._send({"type": "error", "message": "Execution timed out."})
             await self._send({"type": "finished", "reason": "timeout", "exit_code": None})
         except RunnerUnavailable as exc:
+            if self.runner is not None:
+                capture_unexpected(exc, 'runner')
             await self._send({"type": "error", "message": str(exc)})
             await self._send({"type": "finished", "reason": "error", "exit_code": None})
-        except Exception:
+        except Exception as exc:
+            capture_unexpected(exc, 'websocket')
             logger.exception("Terminal session failed")
             await self._send({"type": "error", "message": "The terminal session failed."})
             await self._send({"type": "finished", "reason": "error", "exit_code": None})
         finally:
             self.ready = False
             if self.runner is not None:
-                await self.runner.stop()
+                try:
+                    await self.runner.stop()
+                except Exception as exc:
+                    capture_unexpected(exc, 'runner')
+                    raise
             if not self.disconnected:
                 await self.close()
 
