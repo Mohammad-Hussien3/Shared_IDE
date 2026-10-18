@@ -11,6 +11,20 @@ jobs:
   backend:
     name: Backend tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: shared_ide_ci
+          POSTGRES_USER: shared_ide_ci
+          POSTGRES_PASSWORD: ci-only-postgres-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U shared_ide_ci -d shared_ide_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     defaults:
       run:
         working-directory: backend
@@ -18,7 +32,12 @@ jobs:
       DJANGO_SECRET_KEY: ci-only-test-key-not-used-for-production-credentials
       DJANGO_DEBUG: "false"
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
-      DATABASE_NAME: /tmp/workspace-ci.sqlite3
+      POSTGRES_DB: shared_ide_ci
+      POSTGRES_USER: shared_ide_ci
+      POSTGRES_PASSWORD: ci-only-postgres-password
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: "5432"
+      POSTGRES_SSLMODE: disable
       RUN_PODMAN_INTEGRATION_TESTS: "0"
       SENTRY_DSN: ""
       SENTRY_DISABLED: "true"
@@ -33,6 +52,8 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install backend dependencies
         run: python -m pip install -r requirements.txt
+      - name: Apply Django migrations
+        run: python manage.py migrate --noinput
       - name: Run Django tests
         run: python manage.py test --noinput
 

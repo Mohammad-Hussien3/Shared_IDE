@@ -1,6 +1,12 @@
 runback:
 	cd backend && python manage.py runserver
 
+db-up:
+	docker compose --env-file backend/.env up -d --wait postgres
+
+db-stop:
+	docker compose --env-file backend/.env stop postgres
+
 runfront:
 	cd frontend && npm run dev
 

@@ -160,8 +160,16 @@ ASGI_APPLICATION = 'Shared_IDE.asgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': os.getenv('DATABASE_NAME', str(BASE_DIR / 'db.sqlite3')),
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('POSTGRES_DB', 'shared_ide'),
+        'USER': os.getenv('POSTGRES_USER', 'shared_ide_user'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', ''),
+        'HOST': os.getenv('POSTGRES_HOST', '127.0.0.1'),
+        'PORT': os.getenv('POSTGRES_PORT', '55432'),
+        'OPTIONS': {
+            'connect_timeout': 10,
+            'sslmode': os.getenv('POSTGRES_SSLMODE', 'prefer'),
+        },
     }
 }
 
