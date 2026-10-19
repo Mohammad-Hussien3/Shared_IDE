@@ -194,11 +194,16 @@ class GoogleAuthenticationTests(APITestCase):
         created = self.client.post('/api/workspaces/', {'name': 'Docker Google project'}, format='json')
         self.assertEqual(created.status_code, 201)
         self.assertEqual(Workspace.objects.get().owner, GoogleIdentity.objects.get().user)
-        # The old Vite origin is not implicitly trusted by the Docker deployment.
+        # A valid session/CSRF token must not authorize an untrusted origin.
+        untrusted_origin = 'http://localhost:5173'  # Native Vite, not this Docker origin.
+        self.assertNotEqual(untrusted_origin, settings.GOOGLE_FRONTEND_ORIGIN)
+        self.assertNotIn(untrusted_origin, settings.CSRF_TRUSTED_ORIGINS)
         rejected = self.client.post('/api/auth/google/start/', {}, format='json',
                                     HTTP_X_CSRFTOKEN=restored.data['csrf'],
-                                    HTTP_ORIGIN='http://localhost:8080')
+                                    HTTP_HOST=headers['HTTP_HOST'], HTTP_ORIGIN=untrusted_origin)
         self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(rejected.data['code'], 'csrf_failed')
+        self.assertFalse(GoogleAuthAttempt.objects.exists())
 
     def test_first_login_creates_user_cookie_session_and_owned_workspace(self):
         self.start()
