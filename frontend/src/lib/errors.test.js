@@ -88,6 +88,7 @@ describe("safe error messages", () => {
   it.each([
     ["Isolated runner unavailable: /srv/config SECRET=private", ERROR_MESSAGES.runner],
     ["Error: docker.io/library/python:3.12-alpine: image not known", ERROR_MESSAGES.runner],
+    ["Code execution is not configured for this deployment.", "Code execution is not configured for this deployment."],
     ["Execution timed out.", ERROR_MESSAGES.executionTimeout],
     ["Isolated runner unavailable: Podman query timed out", ERROR_MESSAGES.runner],
     ["Output limit reached.", ERROR_MESSAGES.outputLimit],

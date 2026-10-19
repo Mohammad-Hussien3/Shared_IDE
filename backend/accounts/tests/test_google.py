@@ -67,10 +67,10 @@ class GoogleUsernameTests(TestCase):
 @override_settings(
     DEBUG=True, AUTH_COOKIE_SECURE=False, CSRF_COOKIE_SECURE=False,
     GOOGLE_CLIENT_ID='google-test-client', GOOGLE_CLIENT_SECRET='test-only-secret',
-    GOOGLE_FRONTEND_ORIGIN='http://localhost:5173',
-    GOOGLE_REDIRECT_URI='http://localhost:5173/api/auth/google/callback/',
-    CORS_ALLOWED_ORIGINS=['http://localhost:5173'],
-    CSRF_TRUSTED_ORIGINS=['http://localhost:5173'],
+    GOOGLE_FRONTEND_ORIGIN='http://localhost:8080',
+    GOOGLE_REDIRECT_URI='http://localhost:8080/api/auth/google/callback/',
+    CORS_ALLOWED_ORIGINS=['http://localhost:8080'],
+    CSRF_TRUSTED_ORIGINS=['http://localhost:8080'],
 )
 class GoogleAuthenticationTests(APITestCase):
     password = 'Password-confirmation!473'
@@ -94,7 +94,7 @@ class GoogleAuthenticationTests(APITestCase):
 
     def post(self, path, data=None):
         result = self.client.post('/api/auth/' + path + '/', data or {}, format='json',
-                                  HTTP_X_CSRFTOKEN=self.csrf, HTTP_ORIGIN='http://localhost:5173')
+                                  HTTP_X_CSRFTOKEN=self.csrf, HTTP_ORIGIN='http://localhost:8080')
         if isinstance(result.data, dict) and result.data.get('csrf'):
             self.csrf = result.data['csrf']
         return result
@@ -126,7 +126,7 @@ class GoogleAuthenticationTests(APITestCase):
 
     def assert_result(self, response, result):
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response['Location'], f'http://localhost:5173/auth/google/callback?result={result}')
+        self.assertEqual(response['Location'], f'http://localhost:8080/auth/google/callback?result={result}')
         self.assertNotIn('access', response['Location'])
         self.assertNotIn('refresh', response['Location'])
         self.assertEqual(response['Cache-Control'], 'no-store')
@@ -157,6 +157,48 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertEqual(cookie['path'], google.FLOW_COOKIE_PATH)
         self.fetch_token.assert_not_called()
         self.get_keys.assert_not_called()
+
+    @override_settings(
+        GOOGLE_FRONTEND_ORIGIN='http://localhost:8080',
+        GOOGLE_REDIRECT_URI='http://localhost:8080/api/auth/google/callback/',
+        CORS_ALLOWED_ORIGINS=['http://localhost:8080'],
+        CSRF_TRUSTED_ORIGINS=['http://localhost:8080'],
+        ALLOWED_HOSTS=['localhost', 'testserver'],
+    )
+    def test_docker_public_callback_restores_session_and_preserves_ownership(self):
+        origin = 'http://localhost:8080'
+        headers = {'HTTP_ORIGIN': origin, 'HTTP_HOST': 'localhost:8080'}
+        response = self.client.post('/api/auth/google/start/', {}, format='json',
+                                    HTTP_X_CSRFTOKEN=self.csrf, **headers)
+        self.assertEqual(response.status_code, 200)
+        self.params = {key: values[0] for key, values in parse_qs(
+            urlsplit(response.data['authorization_url']).query).items()}
+        self.assertEqual(self.params['redirect_uri'], origin + '/api/auth/google/callback/')
+        self.assertEqual(self.params['code_challenge_method'], 'S256')
+        self.attempt = GoogleAuthAttempt.objects.get(state_hash=google.digest(self.params['state']))
+        self.assertTrue(response.cookies[google.FLOW_COOKIE]['httponly'])
+        self.assertEqual(response.cookies[google.FLOW_COOKIE]['samesite'], 'Lax')
+        with google.oauth_client() as client:
+            self.assertEqual(client.redirect_uri, self.params['redirect_uri'])
+
+        callback = self.callback()
+        self.assertEqual(callback.status_code, 302)
+        self.assertEqual(callback['Location'], origin + '/auth/google/callback?result=google_success')
+        self.assertTrue(callback.cookies[settings.AUTH_REFRESH_COOKIE]['httponly'])
+        self.assertFalse(GoogleAuthAttempt.objects.exists())
+        csrf = self.client.get('/api/auth/csrf/').data['csrf']
+        restored = self.client.post('/api/auth/refresh/', {}, format='json',
+                                    HTTP_X_CSRFTOKEN=csrf, **headers)
+        self.assertEqual(restored.status_code, 200)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {restored.data['access']}")
+        created = self.client.post('/api/workspaces/', {'name': 'Docker Google project'}, format='json')
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(Workspace.objects.get().owner, GoogleIdentity.objects.get().user)
+        # The old Vite origin is not implicitly trusted by the Docker deployment.
+        rejected = self.client.post('/api/auth/google/start/', {}, format='json',
+                                    HTTP_X_CSRFTOKEN=restored.data['csrf'],
+                                    HTTP_ORIGIN='http://localhost:8080')
+        self.assertEqual(rejected.status_code, 403)
 
     def test_first_login_creates_user_cookie_session_and_owned_workspace(self):
         self.start()

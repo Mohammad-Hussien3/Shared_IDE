@@ -177,6 +177,8 @@ def run_python(source):
 
 def _ensure_image_available(image):
     """Check the image in the calling backend user's Podman store, without pulling."""
+    if os.getenv('CODE_EXECUTION_ENABLED', 'true').lower() not in {'1', 'true', 'yes', 'on'}:
+        raise RunnerUnavailable('Code execution is not configured for this deployment.')
     if not shutil.which(RUNNER_ENGINE):
         raise RunnerUnavailable(
             f"Container runtime '{RUNNER_ENGINE}' is not installed or not on the "

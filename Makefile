@@ -2,10 +2,10 @@ runback:
 	cd backend && python manage.py runserver
 
 db-up:
-	docker compose --env-file backend/.env up -d --wait postgres
+	docker compose up -d --wait postgres
 
 db-stop:
-	docker compose --env-file backend/.env stop postgres
+	docker compose stop postgres
 
 runfront:
 	cd frontend && npm run dev
@@ -36,3 +36,15 @@ runner-images-check:
 	podman image exists docker.io/library/python:3.12-alpine
 	podman image exists docker.io/library/gcc:14
 	podman info --format 'rootless={{.Host.Security.Rootless}} graphroot={{.Store.GraphRoot}}'
+
+up:
+	docker compose up --build -d
+
+stop:
+	docker compose stop
+
+logs:
+	docker compose logs -f backend frontend
+
+docker-migrate:
+	docker compose run --rm migrate

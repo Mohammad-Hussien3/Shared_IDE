@@ -1,10 +1,37 @@
+x-backend: &backend
+  build: ./backend
+  env_file:
+    - backend/.env
+  environment:
+    POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in root .env}
+    POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in root .env}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in root .env}
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    DJANGO_ALLOWED_HOSTS: "${APP_HOSTS:-localhost,127.0.0.1},127.0.0.1"
+    DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
+    AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+    FRONTEND_URL: ${APP_ORIGIN:-http://localhost:8080}
+    FRONTEND_ORIGINS: ${APP_ORIGIN:-http://localhost:8080}
+    GOOGLE_FRONTEND_ORIGIN: ${APP_ORIGIN:-http://localhost:8080}
+    GOOGLE_REDIRECT_URI: "${APP_ORIGIN:-http://localhost:8080}/api/auth/google/callback/"
+    # Local Podman cannot safely run inside this application container.
+    CODE_EXECUTION_ENABLED: "false"
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+
 services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in backend/.env}
-      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in backend/.env}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in backend/.env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in root .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in root .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in root .env}
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     volumes:
@@ -15,6 +42,48 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  backend:
+    <<: *backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+        VITE_SENTRY_DISABLED: ${VITE_SENTRY_DISABLED:-false}
+        VITE_SENTRY_ENVIRONMENT: ${VITE_SENTRY_ENVIRONMENT:-production}
+        VITE_SENTRY_RELEASE: ${VITE_SENTRY_RELEASE:-}
+        VITE_SENTRY_TRACES_SAMPLE_RATE: ${VITE_SENTRY_TRACES_SAMPLE_RATE:-0}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    restart: unless-stopped
 
 volumes:
   postgres_data:

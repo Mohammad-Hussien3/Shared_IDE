@@ -8,3 +8,4 @@ Authlib>=1.9,<2
 joserfc>=1.6.1,<2
 requests>=2.32,<3
 sentry-sdk>=2.72,<3
+whitenoise>=6.9,<7

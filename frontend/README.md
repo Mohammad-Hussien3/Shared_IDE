@@ -6,6 +6,10 @@ Optional Sentry monitoring is disabled unless a DSN is configured. See
 [Monitoring configuration and privacy](../MONITORING.md) for separate frontend/backend
 projects, deployment labels, sampling, and the data intentionally excluded from reports.
 
+## Docker Compose
+
+See [DOCKER.md](../DOCKER.md) for the full application stack, single-origin routing, Google callback settings, and the explicit Podman execution limitation.
+
 ## Development
 
 ```sh
@@ -86,13 +90,31 @@ Unit tests use Django's in-memory email backend and mocked Google/Podman service
 
 Google sign-in is optional; username/password authentication continues to work without Google credentials. The backend uses Authlib Authorization Code + PKCE and validates Google's signed OpenID Connect ID token. All unit tests mock Google network calls and need no real credentials.
 
+### Docker deployment: redirect_uri_mismatch
+
+Open the Docker app at **http://localhost:8080**. In Google Cloud Console → Google Auth Platform → Clients, edit the **Web application** client whose ID matches `GOOGLE_CLIENT_ID` in `backend/.env`. Add this exact **Authorized redirect URI**, including the trailing slash, and save:
+
+```text
+http://localhost:8080/api/auth/google/callback/
+```
+
+Compose uses root `.env`'s `APP_ORIGIN=http://localhost:8080` to set the public frontend origin, CSRF/CORS origins, and `GOOGLE_REDIRECT_URI`. These Compose values override matching entries in `backend/.env`. Keep the `:5173` redirect registered too if you still use native Vite development.
+
+The backend callback `/api/auth/google/callback/` exchanges the code and sets the HttpOnly refresh cookie. It then redirects to the React finish page `/auth/google/callback`. Only the backend callback belongs in Google's Authorized redirect URIs. Neither internal `backend:8000` nor the React finish page is Google's callback. Authorized JavaScript origins do not replace this registration; this server-side flow does not use Google's JavaScript SDK.
+
+A Google `redirect_uri_mismatch` means the requested URI does not match the allowlist for the client ID sent to Google. Scheme, hostname, port, path, case, and trailing slash must match. Check the `redirect_uri` parameter of the authorization URL in browser Network tools; avoid sharing the full URL because it includes OAuth state and nonce. See [Google's redirect URI requirements](https://developers.google.com/identity/protocols/oauth2/web-server#creatingcred).
+
+If `APP_ORIGIN` or backend credentials change, recreate the backend with `docker compose up -d backend`; a simple restart does not apply changed Compose environment values. A Google Console allowlist-only change requires no application rebuild. Start a fresh sign-in attempt after saving it. Do not switch between `localhost` and `127.0.0.1` during a flow.
+
+**Refresh 401 before login:** React checks the HttpOnly refresh cookie once on each full page load. An absent, expired, or revoked session correctly returns 401 and leaves the login page usable; it does not retry indefinitely or establish a session. Returning from a failed Google sign-in and reloading can therefore produce multiple log entries. After successful OAuth, the callback sets the cookie and the next refresh should return 200. Persistent 401s after a successful callback require checking cookie hostname/path/Secure settings and session expiry/revocation; they are not a reason to disable CSRF or JWT validation.
+
 ### Google Cloud and local development
 
 1. Create or select a project in [Google Cloud Console](https://console.cloud.google.com/). In Google Auth Platform, configure Branding (application name, support email, developer contact) and Audience. For development, keep an external app in Testing and add the Google accounts you will use as test users. Configure the `openid` and email identity scopes only.
 2. Under Clients, create an OAuth client with application type **Web application**. Add this exact **Authorized redirect URI**, including its trailing slash:
 
    ```text
-   http://localhost:5173/api/auth/google/callback/
+   http://localhost:8080/api/auth/google/callback/
    ```
 
    This is a Django endpoint reached through Vite's `/api` proxy. Do not register the React finish page `/auth/google/callback` as Google's redirect URI. No Google JavaScript SDK is used, so authorized JavaScript origins are not required by this flow.
@@ -101,12 +123,12 @@ Google sign-in is optional; username/password authentication continues to work w
    ```dotenv
    GOOGLE_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
    GOOGLE_CLIENT_SECRET=your-web-client-secret
-   GOOGLE_FRONTEND_ORIGIN=http://localhost:5173
-   GOOGLE_REDIRECT_URI=http://localhost:5173/api/auth/google/callback/
+   GOOGLE_FRONTEND_ORIGIN=http://localhost:8080
+   GOOGLE_REDIRECT_URI=http://localhost:8080/api/auth/google/callback/
    DJANGO_DEBUG=true
    AUTH_COOKIE_SECURE=false
    AUTH_COOKIE_SAMESITE=Lax
-   FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+   FRONTEND_ORIGINS=http://localhost:8080,http://127.0.0.1:5173
    ```
 
 4. Activate your backend virtual environment and install dependencies/apply the accounts migration from the repository root:
@@ -116,7 +138,7 @@ Google sign-in is optional; username/password authentication continues to work w
    python backend/manage.py migrate
    ```
 
-5. Restart Django and Vite. Keep `VITE_API_URL=/api` in `frontend/.env`, run Django on port 8000, and open **http://localhost:5173**. Select **Continue with Google** on Login or Register.
+5. Restart Django and Vite. Keep `VITE_API_URL=/api` in `frontend/.env`, run Django on port 8000, and open **http://localhost:8080**. Select **Continue with Google** on Login or Register.
 
 Use one browser hostname consistently. If you prefer `127.0.0.1`, change both Google URL settings to that hostname, register that exact callback with Google, and use the corresponding trusted frontend origin. Cookies for `localhost` cannot bind a flow returning to `127.0.0.1`. Starting Google login from an origin other than `GOOGLE_FRONTEND_ORIGIN` is rejected with a friendly message.
 

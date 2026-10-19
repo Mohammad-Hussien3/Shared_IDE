@@ -12,6 +12,7 @@ from workspace.interactive_runner import InteractiveRunner, MAX_INPUT_BYTES, MAX
 class RunnerEnvironmentMixin:
     def setUp(self):
         super().setUp()
+        self.enterContext(patch.dict('os.environ', {'CODE_EXECUTION_ENABLED': 'true'}))
         self.enterContext(patch.multiple(runner, RUNNER_ENGINE='podman', RUNNER_PULL_POLICY='never'))
 
 

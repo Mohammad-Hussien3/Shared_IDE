@@ -21,3 +21,4 @@ __pycache__/
 
 # Environment variables
 .env
+backend/staticfiles/

@@ -176,6 +176,7 @@ export function getTerminalErrorMessage(message) {
   const text = typeof message === "string" ? message : "";
   let friendly = ERROR_MESSAGES.execution;
   if (/session expired|access revoked/i.test(text)) friendly = ERROR_MESSAGES.session;
+  else if (text === "Code execution is not configured for this deployment.") friendly = text;
   else if (/^Execution timed out\.?$/i.test(text)) friendly = ERROR_MESSAGES.executionTimeout;
   else if (/output limit/i.test(text)) friendly = ERROR_MESSAGES.outputLimit;
   else if (/too large/i.test(text)) friendly = ERROR_MESSAGES.tooLarge;

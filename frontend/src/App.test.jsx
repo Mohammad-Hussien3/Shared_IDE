@@ -409,3 +409,19 @@ it('links Google only after confirming the existing account password', async () 
   expect(JSON.parse(options.body)).toEqual({ password: 'Current-password!27' });
   expect(screen.getByLabelText('Current password')).toHaveValue('');
 });
+
+it("treats anonymous restore 401 as signed out without retrying on auth-page navigation", async () => {
+  mount("/login");
+  await screen.findByRole("heading", { name: "Welcome back" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  const restores = () => requests.filter(request => request.url.endsWith("/auth/refresh/"));
+  expect(restores()).toHaveLength(1);
+  expect(restores()[0].options.credentials).toBe("include");
+  expect(restores()[0].options.headers["X-CSRFToken"]).toBe("csrf");
+  fireEvent.click(screen.getByRole("link", { name: "Create an account" }));
+  await screen.findByLabelText("Email address", { exact: true });
+  fireEvent.click(screen.getByRole("link", { name: "Sign in", exact: true }));
+  await screen.findByRole("heading", { name: "Welcome back" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(restores()).toHaveLength(1);
+});
