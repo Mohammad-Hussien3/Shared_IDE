@@ -12,6 +12,10 @@ export const GOOGLE_MESSAGES = {
 };
 
 export const VERIFICATION_MESSAGES = {
+  sharing_self: "You already own this file.",
+  sharing_duplicate: "This user already has access or a pending invitation.",
+  sharing_transition: "This invitation has already been handled. Refresh the list.",
+  collaboration_required: "This file uses live collaboration. Reopen it to sync your changes safely.",
   reset_invalid: "This password reset link is invalid or no longer works. Request a new link.",
   reset_expired: "This password reset link has expired. Request a new link.",
   reset_used: "This password reset link has already been used. Sign in or request a new link.",

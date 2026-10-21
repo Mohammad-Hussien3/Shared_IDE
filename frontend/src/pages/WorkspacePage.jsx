@@ -20,6 +20,8 @@ import {
   ChevronRight,
   Code2,
   Files,
+  Inbox,
+  UsersRound,
   FilePlus2,
   FolderOpen,
   LoaderCircle,
@@ -60,9 +62,25 @@ import {
 import "../App.css";
 import { defineEditorThemes } from "../lib/editorThemes";
 
+import ManageCollaborators from "../components/ManageCollaborators";
+import SharingSidebar from "../components/SharingSidebar";
+import { useWorkspaceSharing } from "../lib/useWorkspaceSharing";
+
+const CollaborativeEditor = lazy(() => import("../components/CollaborativeEditor"));
 const Editor = lazy(() => import("../components/CodeEditor"));
 
-export default function WorkspacePage({ workspaceId }) {
+// Each open shared tab owns a stable provider ref, independent of visibility.
+function CollaborativeTab({ onController, ...props }) {
+  const controllerRef = useRef(null);
+  const id = props.file.id;
+  useEffect(() => {
+    onController(id, controllerRef);
+    return () => onController(id, null);
+  }, [id, onController]);
+  return <CollaborativeEditor {...props} controllerRef={controllerRef} />;
+}
+
+export default function WorkspacePage({ workspaceId, initialSharedFileId }) {
   const { client, user } = useAuth();
   const requestControllerRef = useRef(null);
   const mountedRef = useRef(false);
@@ -97,8 +115,14 @@ export default function WorkspacePage({ workspaceId }) {
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [sharingFile, setSharingFile] = useState(null);
   const [dialog, setDialog] = useState(null);
   const [openFileIds, setOpenFileIds] = useState([]);
+  // File UUIDs are globally unique, including files outside this workspace.
+  const [tabFiles, setTabFiles] = useState({});
+  const [collaborationStates, setCollaborationStates] = useState({});
+  const [presenceByFile, setPresenceByFile] = useState({});
+  const initialFileOpened = useRef(null);
   const [theme, setTheme] = useState(
     () => localStorage.getItem("ide-theme") || "dark",
   );
@@ -115,7 +139,16 @@ export default function WorkspacePage({ workspaceId }) {
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const [diagnostics, setDiagnostics] = useState({});
   const [executionProblems, setExecutionProblems] = useState([]);
+  const [executionSnapshot, setExecutionSnapshot] = useState(null);
   const editorRef = useRef(null);
+  const collaborationControllers = useRef(new Map());
+  const registerController = useCallback((id, controller) => {
+    if (controller) collaborationControllers.current.set(id, controller);
+    else collaborationControllers.current.delete(id);
+  }, []);
+  const onlineUsers = presenceByFile[activeFile?.id] || [];
+  const activeCollaboration = collaborationStates[activeFile?.id];
+  const cannotEdit = (activeCollaboration?.permission || activeFile?.permission) === "view" || activeCollaboration?.fatal;
   const cursorSubscriptionRef = useRef(null);
   const [running, setRunning] = useState(false);
   const [runStage, setRunStage] = useState("");
@@ -155,7 +188,7 @@ export default function WorkspacePage({ workspaceId }) {
   const openedFiles = openFileIds
     .map(
       (id) =>
-        findFileById(tree, id) || (activeFile?.id === id ? activeFile : null),
+        findFileById(tree, id) || tabFiles[id] || (activeFile?.id === id ? activeFile : null),
     )
     .filter(Boolean);
   const problems = [...Object.values(diagnostics).flat(), ...executionProblems];
@@ -236,10 +269,13 @@ export default function WorkspacePage({ workspaceId }) {
     };
   }, [workspaceId, apiFetch]);
 
+  const sharing = useWorkspaceSharing();
+
   const selectFile = useCallback(
     async (file) => {
       setActiveFile(file);
       activeFileRef.current = file;
+      setTabFiles(current => ({ ...current, [file.id]: file }));
       setOpenFileIds((current) =>
         current.includes(file.id) ? current : [...current, file.id],
       );
@@ -259,10 +295,15 @@ export default function WorkspacePage({ workspaceId }) {
       try {
         const fetchedFile = await responseData(
           await apiFetch(
-            `${API_BASE_URL}/workspaces/${workspaceId}/files/${file.id}/`,
+            file.shared ? `${API_BASE_URL}/sharing/files/${file.id}/`
+              : `${API_BASE_URL}/workspaces/${workspaceId}/files/${file.id}/`,
           ),
         );
         if (requestId === fileRequestId.current) {
+          const opened = { ...file, ...fetchedFile, type: "file" };
+          setActiveFile(current => current?.id === file.id ? opened : current);
+          activeFileRef.current = opened;
+          setTabFiles(current => ({ ...current, [file.id]: opened }));
           const content = fetchedFile.content ?? "";
           setFileContent(content);
           setContentsByFile((current) => ({ ...current, [file.id]: content }));
@@ -277,6 +318,14 @@ export default function WorkspacePage({ workspaceId }) {
     [workspaceId, contentsByFile, apiFetch],
   );
 
+  const openSharedFile = (file) => selectFile(findFileById(tree, file.id) || { ...file, shared: true, type: "file" });
+  useEffect(() => {
+    if (!initialSharedFileId || initialFileOpened.current === initialSharedFileId) return;
+    initialFileOpened.current = initialSharedFileId;
+    setSidebarView("shared");
+    selectFile({ id: initialSharedFileId, name: "Shared file", shared: true, type: "file" });
+  }, [initialSharedFileId, selectFile]);
+
   const toggleFolder = (id) =>
     setExpanded((current) => {
       const next = new Set(current);
@@ -287,6 +336,7 @@ export default function WorkspacePage({ workspaceId }) {
 
   const refreshWorkspaceTree = useCallback(
     async (folderIdsToExpand = []) => {
+      if (!workspaceId) return { children: [] };
       const data = await responseData(
         await apiFetch(`${API_BASE_URL}/workspaces/${workspaceId}/`),
       );
@@ -299,6 +349,23 @@ export default function WorkspacePage({ workspaceId }) {
     },
     [workspaceId, apiFetch],
   );
+
+  const openShare = (file) => {
+    if (file.permission && file.permission !== "owner") return;
+    if (dirtyFilesRef.current.has(file.id) && !file.collaborative) {
+      setActionMessage("Save this file before sharing it."); setActionError(true); return;
+    }
+    setSharingFile(file);
+  };
+  const sharingChanged = async () => {
+    const data = await refreshWorkspaceTree();
+    await sharing.refresh();
+    const current = activeFileRef.current;
+    if (current) {
+      const fresh = findFileById(data.children || [], current.id);
+      if (fresh) setActiveFile(previous => previous?.id === fresh.id ? { ...previous, ...fresh } : previous);
+    }
+  };
 
   const createItem = (type, folderId = selectedFolderId) =>
     setDialog({
@@ -377,6 +444,16 @@ export default function WorkspacePage({ workspaceId }) {
   };
 
   const saveFile = async () => {
+    if (cannotEdit) return;
+    if (activeFile?.collaborative) {
+      if (!collaborationControllers.current.get(activeFile.id)?.current || runInProgressRef.current || saveInProgressRef.current) return;
+      saveInProgressRef.current = true;
+      setManualSaving(true); setSaveError("");
+      try { await collaborationControllers.current.get(activeFile.id)?.current.flush(); }
+      catch { setSaveError("Wait for collaboration to reconnect and save your changes."); }
+      finally { saveInProgressRef.current = false; setManualSaving(false); }
+      return;
+    }
     if (
       !activeFile ||
       loadingFile ||
@@ -474,13 +551,15 @@ export default function WorkspacePage({ workspaceId }) {
     const remaining = openFileIds.filter((id) => id !== file.id);
     setOpenFileIds(remaining);
     markDirty(file.id, false);
+    setTabFiles(current => { const next = { ...current }; delete next[file.id]; return next; });
+    collaborationControllers.current.delete(file.id);
     setContentsByFile((current) => {
       const next = { ...current };
       delete next[file.id];
       return next;
     });
     if (activeFileRef.current?.id === file.id) {
-      const next = findFileById(tree, remaining.at(-1));
+      const next = findFileById(tree, remaining.at(-1)) || tabFiles[remaining.at(-1)];
       if (next) selectFile(next);
       else {
         fileRequestId.current += 1;
@@ -581,12 +660,13 @@ export default function WorkspacePage({ workspaceId }) {
     }
   };
 
-  const executeSavedFile = async (fileId, filename) => {
+  const executeSavedFile = async (fileId, filename, shared = false, language) => {
     const accessToken = await client.getAccessToken();
     if (!mountedRef.current) throw new Error("Workspace closed.");
     return new Promise((resolve, reject) => {
       const socket = new WebSocket(
-        `${WS_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/run/`,
+        shared ? `${WS_BASE_URL}/sharing/files/${fileId}/run/`
+          : `${WS_BASE_URL}/workspaces/${workspaceId}/files/${fileId}/run/`,
       );
       activeSocketRef.current = socket;
       terminalReadyRef.current = false;
@@ -599,7 +679,7 @@ export default function WorkspacePage({ workspaceId }) {
         );
       };
       const startProgram = () => {
-        socket.send(JSON.stringify({ type: "start" }));
+        socket.send(JSON.stringify({ type: "start", ...(language ? { language } : {}) }));
         const { cols, rows } = terminalRef.current?.getDimensions() || {
           cols: 80,
           rows: 24,
@@ -617,6 +697,12 @@ export default function WorkspacePage({ workspaceId }) {
         if (message.type === "authenticated") {
           startProgram();
         } else if (message.type === "ready") {
+          if (shared && Number.isSafeInteger(message.revision) && message.revision >= 0) {
+            const provider = collaborationControllers.current.get(fileId)?.current;
+            setExecutionSnapshot({ fileId, filename, revision: message.revision,
+              changed: Boolean(provider?.pendingChanges || provider?.revision > message.revision) });
+            writeTerminal(`Executing ${filename} · revision ${message.revision}\r\n`);
+          }
           terminalReadyRef.current = true;
           const dimensions = terminalRef.current?.getDimensions();
           if (dimensions)
@@ -691,10 +777,11 @@ export default function WorkspacePage({ workspaceId }) {
   };
 
   const runFile = async () => {
-    if (runInProgressRef.current) return;
+    if (runInProgressRef.current || cannotEdit) return;
     terminalRef.current?.clear();
     terminalRef.current?.reveal();
     setExecutionProblems([]);
+    setExecutionSnapshot(null);
     if (!activeFile) {
       writeTerminal("Select a file before running code.\r\n");
       return;
@@ -713,8 +800,8 @@ export default function WorkspacePage({ workspaceId }) {
     }
 
     const fileId = activeFile.id;
-    const contentToRun = fileContent;
-    const revisionAtRun = contentRevisionsRef.current.get(fileId) || 0;
+    let contentToRun = fileContent;
+    let revisionAtRun = contentRevisionsRef.current.get(fileId) || 0;
     let saveAttempted = false;
     let saveConfirmed = false;
     runInProgressRef.current = true;
@@ -722,6 +809,12 @@ export default function WorkspacePage({ workspaceId }) {
     setRunStage("saving");
     writeTerminal("Saving the latest editor content…\r\n");
     try {
+      if (activeFile.collaborative) {
+        if (!collaborationControllers.current.get(activeFile.id)?.current) throw new UserFacingError("Wait for collaboration to connect before running.");
+        try { contentToRun = await collaborationControllers.current.get(activeFile.id)?.current.flush(); }
+        catch { throw new UserFacingError("Wait for collaboration to reconnect and save before running."); }
+        revisionAtRun = contentRevisionsRef.current.get(fileId) || 0;
+      }
       const filenameHasExtension = hasFilenameExtension(activeFile.name);
       let language;
       if (filenameHasExtension) {
@@ -733,7 +826,7 @@ export default function WorkspacePage({ workspaceId }) {
         }
       } else {
         language =
-          detectLanguageFromContent(fileContent) || (await chooseLanguage());
+          detectLanguageFromContent(contentToRun) || (await chooseLanguage());
         if (!language) {
           throw new UserFacingError(
             "Choose python, c, or cpp to run this file. It was not renamed.",
@@ -741,6 +834,14 @@ export default function WorkspacePage({ workspaceId }) {
         }
       }
 
+      if (activeFile.collaborative) {
+        // Yjs has acknowledged persistence. The server copies the document once
+        // for this private run; editing continues and no run result writes it back.
+        setRunStage("running");
+        writeTerminal("Running a saved collaboration snapshot in an isolated container…\r\n");
+        await executeSavedFile(fileId, getFileName(activeFile), true, language);
+        return;
+      }
       const newName = filenameHasExtension
         ? activeFile.name
         : `${activeFile.name}${LANGUAGE_EXTENSIONS[language]}`;
@@ -875,7 +976,44 @@ export default function WorkspacePage({ workspaceId }) {
     }
   };
   const runDisabled =
-    running || loadingFile || Boolean(fileError) || manualSaving;
+    running || loadingFile || Boolean(fileError) || manualSaving || cannotEdit;
+
+  const mountEditor = (editor) => {
+    editorRef.current = editor;
+    cursorSubscriptionRef.current?.dispose();
+    cursorSubscriptionRef.current = editor.onDidChangeCursorPosition(({ position }) =>
+      setCursor({ line: position.lineNumber, column: position.column }),
+    );
+  };
+  const validateEditor = (markers) => {
+    if (!activeFile) return;
+    setDiagnostics((current) => ({
+      ...current,
+      [activeFile.id]: markers.map((marker) => ({
+        fileId: activeFile.id,
+        filename: getFileName(activeFile),
+        message: marker.message,
+        line: marker.startLineNumber,
+      })),
+    }));
+  };
+  const editorOptions = {
+    fontSize,
+    fontFamily: "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
+    fontLigatures: true,
+    minimap: { enabled: false },
+    wordWrap: wordWrap ? "on" : "off",
+    readOnly: loadingFile || Boolean(fileError),
+    scrollBeyondLastLine: false,
+    automaticLayout: true,
+    padding: { top: 20, bottom: 20 },
+    lineNumbersMinChars: 4,
+    renderLineHighlight: "line",
+    overviewRulerBorder: false,
+    smoothScrolling: true,
+    cursorSmoothCaretAnimation: "on",
+    bracketPairColorization: { enabled: true },
+  };
 
   return (
     <main className={`ide-shell theme-${theme}`}>
@@ -909,7 +1047,7 @@ export default function WorkspacePage({ workspaceId }) {
             className="button save-button"
             onClick={saveFile}
             disabled={
-              !activeFile ||
+              !activeFile || cannotEdit ||
               loadingFile ||
               Boolean(fileError) ||
               manualSaving ||
@@ -949,9 +1087,10 @@ export default function WorkspacePage({ workspaceId }) {
             {[
               { id: "explorer", icon: Files, label: "Explorer" },
               { id: "search", icon: Search, label: "Search" },
+              { id: "shared", icon: UsersRound, label: "Shared Files" },
+              { id: "invitations", icon: Inbox, label: "Invitations" },
             ].map(({ id, icon: Icon, label }) => (
-              <IconButton
-                key={id}
+              <div className="activity-entry" key={id}><IconButton
                 icon={Icon}
                 label={label}
                 className={sidebarOpen && sidebarView === id ? "active" : ""}
@@ -960,7 +1099,7 @@ export default function WorkspacePage({ workspaceId }) {
                   if (sidebarOpen && sidebarView === id) setSidebarOpen(false);
                   else openSidebar(id);
                 }}
-              />
+              />{id === "invitations" && sharing.incoming.length > 0 && <span className="activity-badge" aria-label={`${sharing.incoming.length} pending invitations`}>{sharing.incoming.length > 99 ? "99+" : sharing.incoming.length}</span>}</div>
             ))}
           </div>
           <div>
@@ -990,7 +1129,11 @@ export default function WorkspacePage({ workspaceId }) {
               onClick={() => setSidebarOpen(false)}
             />
             <aside className="sidebar" style={{ width: sidebarWidth }}>
-              {sidebarView === "explorer" ? (
+              {sidebarView === "shared" || sidebarView === "invitations" ? (
+                <SharingSidebar view={sidebarView} sharing={sharing} onOpen={openSharedFile} onManage={openShare} />
+              ) : sidebarView === "explorer" && !workspaceId ? (
+                <div className="sharing-sidebar-empty">Open a workspace to explore your own files. <Link to="/workspaces">My workspaces</Link></div>
+              ) : sidebarView === "explorer" ? (
                 <Explorer
                   tree={tree}
                   workspaceName={workspace?.name || "Workspace"}
@@ -1005,6 +1148,7 @@ export default function WorkspacePage({ workspaceId }) {
                   onToggle={toggleFolder}
                   onCreate={createItem}
                   onRename={renameItem}
+                  onShare={openShare}
                   onDelete={deleteItem}
                   onRefresh={refresh}
                   dirtyIds={dirtyIds}
@@ -1061,13 +1205,13 @@ export default function WorkspacePage({ workspaceId }) {
               )}
             </div>
             <div className="toolbar-actions">
-              {activeFile && <SaveIndicator status={saveStatus} />}
+              {activeFile && <>{(!activeFile.permission || activeFile.permission === "owner") && <button className="button" onClick={() => openShare(activeFile)}>Share</button>}<SaveIndicator status={saveStatus} /></>}
               <IconButton
                 icon={Save}
                 label="Save file (Ctrl+S)"
                 onClick={saveFile}
                 disabled={
-                  !activeFile ||
+                  !activeFile || cannotEdit ||
                   loadingFile ||
                   Boolean(fileError) ||
                   manualSaving ||
@@ -1094,6 +1238,30 @@ export default function WorkspacePage({ workspaceId }) {
             </div>
           )}
           <div className="editor-area">
+            {openedFiles.filter(file => file.collaborative).map(file => (
+              <div key={file.id} className="collaboration-pane" hidden={activeFile?.id !== file.id}>
+                <Suspense fallback={<div className="editor-loading">Connecting to collaboration…</div>}>
+                  <CollaborativeTab file={file} theme={theme} active={activeFile?.id === file.id}
+                    onController={registerController} options={{ ...editorOptions, readOnly: file.id === activeFile?.id && editorOptions.readOnly }}
+                    onMount={file.id === activeFile?.id ? mountEditor : undefined}
+                    onValidate={file.id === activeFile?.id ? validateEditor : undefined}
+                    onPresence={people => setPresenceByFile(current => ({ ...current, [file.id]: people }))}
+                    onContent={content => {
+                      contentRevisionsRef.current.set(file.id, (contentRevisionsRef.current.get(file.id) || 0) + 1);
+                      if (activeFileRef.current?.id === file.id) setFileContent(content);
+                      setContentsByFile(current => ({ ...current, [file.id]: content }));
+                    }}
+                    onStatus={state => {
+                      setCollaborationStates(current => ({ ...current, [file.id]: state }));
+                      setExecutionSnapshot(current => current?.fileId === file.id && !current.changed &&
+                        (state.pendingChanges || state.revision > current.revision)
+                        ? { ...current, changed: true } : current);
+                      if (activeFileRef.current?.id === file.id) setSaveStatus(state.saved ? "Saved" : "Unsaved");
+                      markDirty(file.id, !state.saved && !state.fatal);
+                    }} />
+                </Suspense>
+              </div>
+            ))}
             {activeFile ? (
               <>
                 <Suspense
@@ -1104,7 +1272,7 @@ export default function WorkspacePage({ workspaceId }) {
                     </div>
                   }
                 >
-                  <Editor
+                  {!activeFile.collaborative && <Editor
                     workspaceId={workspaceId}
                     height="100%"
                     path={`file:///${workspaceId}/${activeFile.id}`}
@@ -1115,53 +1283,16 @@ export default function WorkspacePage({ workspaceId }) {
                     language={languageFor(activeFile)}
                     value={fileContent}
                     onChange={onEditorChange}
-                    onMount={(editor) => {
-                      editorRef.current = editor;
-                      cursorSubscriptionRef.current?.dispose();
-                      cursorSubscriptionRef.current =
-                        editor.onDidChangeCursorPosition(({ position }) =>
-                          setCursor({
-                            line: position.lineNumber,
-                            column: position.column,
-                          }),
-                        );
-                    }}
-                    onValidate={(markers) =>
-                      setDiagnostics((current) => ({
-                        ...current,
-                        [activeFile.id]: markers.map((marker) => ({
-                          fileId: activeFile.id,
-                          filename: getFileName(activeFile),
-                          message: marker.message,
-                          line: marker.startLineNumber,
-                        })),
-                      }))
-                    }
+                    onMount={mountEditor}
+                    onValidate={validateEditor}
                     loading={
                       <div className="editor-loading">
                         <LoaderCircle className="spin" size={22} />
                         <span>Preparing your editor…</span>
                       </div>
                     }
-                    options={{
-                      fontSize,
-                      fontFamily:
-                        "'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
-                      fontLigatures: true,
-                      minimap: { enabled: false },
-                      wordWrap: wordWrap ? "on" : "off",
-                      readOnly: loadingFile || Boolean(fileError),
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      padding: { top: 20, bottom: 20 },
-                      lineNumbersMinChars: 4,
-                      renderLineHighlight: "line",
-                      overviewRulerBorder: false,
-                      smoothScrolling: true,
-                      cursorSmoothCaretAnimation: "on",
-                      bracketPairColorization: { enabled: true },
-                    }}
-                  />
+                    options={editorOptions}
+                  />}
                 </Suspense>
                 {(loadingFile || fileError) && (
                   <div className="editor-overlay">
@@ -1190,7 +1321,7 @@ export default function WorkspacePage({ workspaceId }) {
                   <button
                     className="button button-primary"
                     onClick={() => createItem("file", null)}
-                    disabled={loading || Boolean(error)}
+                    disabled={!workspaceId || loading || Boolean(error)}
                   >
                     <FilePlus2 size={15} />
                     Create a file
@@ -1228,9 +1359,10 @@ export default function WorkspacePage({ workspaceId }) {
             runStage={runStage}
             theme={theme}
             problems={problems}
+            snapshot={executionSnapshot}
             onMaximize={setPanelMaximized}
             onProblemSelect={(problem) => {
-              const file = findFileById(tree, problem.fileId);
+              const file = findFileById(tree, problem.fileId) || tabFiles[problem.fileId];
               if (file) selectFile(file);
             }}
           />
@@ -1281,6 +1413,7 @@ export default function WorkspacePage({ workspaceId }) {
           />
         </div>
       )}
+      {sharingFile && <ManageCollaborators file={sharingFile} onClose={() => setSharingFile(null)} onChanged={sharingChanged} onlineUsers={sharingFile.id === activeFile?.id ? onlineUsers : []} />}
       {dialog && (
         <ResourceDialog
           key={dialog.title}

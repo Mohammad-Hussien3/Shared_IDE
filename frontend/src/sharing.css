@@ -1,0 +1,74 @@
+.sharing-nav { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 26px; }
+.sharing-nav a { padding:9px 14px; border-radius:8px; color:var(--muted); text-decoration:none; border:1px solid var(--border); }
+.sharing-nav a.active,.sharing-nav a:hover { color:var(--strong); background:var(--surface); border-color:var(--accent); }
+.sharing-dialog { width:min(680px, calc(100vw - 32px)); max-height:85dvh; overflow:auto; }
+.sharing-dialog > p { line-height:1.6; }
+.sharing-dialog h3 { margin-top:24px; }
+.sharing-filename { font-family:monospace; overflow:hidden; text-overflow:ellipsis; }
+.sharing-invite { display:grid; gap:12px; padding:16px 0; border-block:1px solid var(--border); }
+.sharing-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:12px 0; border-bottom:1px solid var(--border); }
+.sharing-row > span { flex:1; min-width:120px; overflow-wrap:anywhere; }
+.sharing-row small { display:block; color:var(--muted); margin-top:4px; }
+.sharing-row select { width:auto; }
+.sharing-confirm { margin-top:16px; padding:16px; border:1px solid var(--accent); border-radius:8px; }
+.sharing-confirm button { margin:4px; }
+.sharing-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr)); gap:16px; }
+.sharing-card { border:1px solid var(--border); border-radius:12px; padding:20px; background:var(--surface); }
+.sharing-card h2 { font-size:17px; overflow:hidden; text-overflow:ellipsis; }
+.sharing-card p,.sharing-card time { color:var(--muted); font-size:13px; }
+.sharing-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+.sharing-actions a { text-decoration:none; }
+.shared-file-shell { display:flex; flex-direction:column; height:100dvh; }
+.shared-file-shell > .editor-area { flex:1; min-height:0; }
+
+.collaborative-editor { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; }
+.collaboration-monaco { flex:1; min-height:0; }
+.collaboration-status { min-height:30px; display:flex; gap:14px; align-items:center; padding:6px 14px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--border); }
+.collaboration-status { flex-wrap:wrap; }
+.collaboration-people { display:flex; flex-wrap:wrap; gap:10px; margin-left:auto; }
+.collaboration-person { display:inline-flex; align-items:center; gap:5px; color:var(--strong); }
+.collaboration-person i { width:7px; height:7px; background:var(--collaborator-color); border-radius:50%; }
+.monaco-editor .shared-caret { position:relative; width:10px; height:19px; padding:0; margin:0 0 0 -4px; border:0;
+  background:transparent; border-radius:0; cursor:pointer; overflow:visible; }
+.monaco-editor .shared-caret::after { content:''; position:absolute; left:4px; top:0; bottom:0;
+  width:2px; background:var(--collaborator-color); pointer-events:none; }
+.monaco-editor .shared-caret:focus-visible { outline:1px solid var(--collaborator-color); outline-offset:2px; }
+.monaco-editor .shared-caret-label { position:absolute; left:4px; top:19px; z-index:15; background:var(--collaborator-color);
+  color:#16131d; border-radius:3px; padding:3px 7px; white-space:nowrap; font:600 11px/1.3 system-ui,sans-serif;
+  pointer-events:none; box-shadow:0 2px 6px #0005; }
+.monaco-editor .shared-caret-label[hidden] { display:none; }
+@media (pointer:coarse) { .monaco-editor .shared-caret { width:20px; } }
+/* Keep remote carets interactive even when the local caret occupies the same cell. */
+.monaco-editor .shared-caret { z-index:20; }
+.monaco-editor .shared-caret-label { max-width:min(220px,60vw); overflow:hidden; text-overflow:ellipsis; }
+
+.monaco-editor .shared-caret { margin-left:calc(-4px + var(--caret-offset, 0px)); }
+
+/* Collaboration panels share the existing workspace sidebar and theme tokens. */
+.activity-entry { position: relative; }
+.activity-badge { position: absolute; top: 3px; right: 2px; min-width: 16px; padding: 1px 4px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; pointer-events: none; text-align: center; }
+.sharing-sidebar { height: 100%; overflow: auto; padding-bottom: 16px; }
+.sharing-sidebar h3 { display: flex; justify-content: space-between; margin: 20px 14px 8px; color: var(--strong); font-size: 12px; }
+.sharing-sidebar h3 span { color: var(--muted); }
+.sharing-sidebar ul { list-style: none; padding: 0 8px; margin: 0; }
+.sharing-sidebar-item { display: flex; flex-direction: column; gap: 6px; margin: 5px 0; padding: 9px; border: 1px solid var(--border); border-radius: 7px; min-width: 0; }
+.sharing-sidebar-item strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.sharing-sidebar-item small { display: block; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.sharing-file-open { display: flex; align-items: flex-start; gap: 8px; background: none; border: 0; color: var(--strong); text-align: left; padding: 0; cursor: pointer; }
+.sharing-file-open > span { min-width: 0; flex: 1; display: grid; gap: 5px; }
+.sharing-file-open svg { flex-shrink: 0; }
+.sharing-file-open:hover strong, .sharing-manage:hover { color: var(--accent); }
+.sharing-manage { display: flex; align-items: center; gap: 5px; color: var(--muted); background: none; border: 0; padding: 5px 0 0; text-align: left; font-size: 11px; cursor: pointer; }
+.sharing-sidebar-empty { color: var(--muted); padding: 10px 7px; font-size: 12px; line-height: 1.6; }
+.sharing-directions { display: flex; gap: 5px; padding: 8px 12px; }
+.sharing-directions button { flex: 1; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: transparent; padding: 6px; font-size: 11px; cursor: pointer; }
+.sharing-directions .active { color: var(--accent); border-color: var(--accent); }
+.sharing-invitation-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.sharing-invitation-actions .button { padding: 5px 9px; font-size: 11px; }
+
+.collaboration-pane { height: 100%; min-height: 0; width: 100%; }
+.collaboration-pane[hidden] { display: none; }
+
+.execution-snapshot { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: 6px 14px; padding: 6px 14px; color: var(--muted); border-bottom: 1px solid var(--border); font-size: 11px; }
+.execution-snapshot > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.execution-snapshot .snapshot-changed { color: var(--warning); }

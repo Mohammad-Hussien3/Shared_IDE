@@ -13,6 +13,9 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -120,6 +123,7 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ['accounts.authentication.SessionJWTAuthentication'],
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated'],
     'DEFAULT_THROTTLE_RATES': {
+        'sharing_search': '20/minute', 'sharing_manage': '30/minute',
         'auth': '30/minute', 'verification_resend': '5/hour',
         'account_changes': '10/minute', 'account_email': '5/hour',
         'password_reset_request': '5/hour', 'password_reset_confirm': '10/minute',
@@ -224,3 +228,29 @@ if os.getenv('DJANGO_TRUST_PROXY_HTTPS', 'false').lower() == 'true':
 from .monitoring import init_sentry
 
 init_sentry()
+
+
+# Redis coordinates collaboration across processes; local tests/dev can use one process.
+# Channels intentionally blocks in BZPOPMIN for five seconds on idle receives.
+# redis-py's finite read deadline must not race that server-side blocking timeout.
+# Keep connection establishment bounded; async receives remain cancellable.
+REDIS_URL = os.getenv('REDIS_URL', '').strip()
+# Single-process DEBUG development may opt out. Deployments require shared
+# coordination by default; isolated tests explicitly set REDIS_REQUIRED=false.
+REDIS_REQUIRED = os.getenv('REDIS_REQUIRED', str(not DEBUG)).strip().lower() in {'1', 'true', 'yes', 'on'}
+if REDIS_REQUIRED and not REDIS_URL:
+    raise ImproperlyConfigured('REDIS_URL is required for shared coordination. Configure a private Redis instance; REDIS_REQUIRED=false is only for single-process development or isolated tests.')
+if REDIS_URL:
+    try:
+        redis_query = parse_qs(urlsplit(REDIS_URL).query, keep_blank_values=True)
+    except ValueError:
+        raise ImproperlyConfigured('REDIS_URL is malformed.') from None
+    # redis-py URL query options override the host dictionary's safe timeouts.
+    if {'socket_timeout', 'socket_connect_timeout'} & redis_query.keys():
+        raise ImproperlyConfigured('Do not set socket_timeout or socket_connect_timeout in REDIS_URL; the channel layer configures them.')
+CHANNEL_LAYERS = {'default': {
+    'BACKEND': 'channels_redis.core.RedisChannelLayer' if REDIS_URL else 'channels.layers.InMemoryChannelLayer',
+    **({'CONFIG': {'hosts': [{"address": REDIS_URL, "socket_timeout": None, "socket_connect_timeout": 5}], 'capacity': 200, 'expiry': 30}} if REDIS_URL else {}),
+}}
+if REDIS_URL:
+    CACHES = {'default': {'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': REDIS_URL}}

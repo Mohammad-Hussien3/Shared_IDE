@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework.generics import (
     ListCreateAPIView,
     RetrieveUpdateDestroyAPIView,
@@ -74,6 +75,16 @@ class FileListCreateAPIView(WorkspaceScopedMixin, ListCreateAPIView):
 
 class FileDetailAPIView(WorkspaceScopedMixin, RetrieveUpdateDestroyAPIView):
     serializer_class = FileSerializer
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        instance = get_object_or_404(self.get_queryset().select_for_update(), pk=kwargs['pk'])
+        if hasattr(instance, 'document') and 'content' in request.data and request.data['content'] != instance.content:
+            return Response({'code': 'collaboration_required'}, status=409)
+        # super obtains the same locked file. Sharing activation/writes/revocation
+        # cannot race a legacy save while this transaction owns the row lock.
+        return super().update(request, *args, **kwargs)
+
 
     def get_queryset(self):
         return File.objects.filter(workspace=self.get_workspace())

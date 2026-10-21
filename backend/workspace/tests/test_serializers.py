@@ -82,7 +82,7 @@ class SerializerTests(TestCase):
         result = WorkspaceTreeSerializer(self.workspace).data
         self.assertEqual(len(result['children']), 1)
         node = result['children'][0]['children'][0]['children'][0]
-        self.assertEqual(node, {'id': str(file.id), 'name': 'main', 'type': 'file', 'language': 'python', 'content': 'print(1)'})
+        self.assertEqual(node, {'id': str(file.id), 'name': 'main', 'type': 'file', 'language': 'python', 'content': 'print(1)', 'collaborative': False})
 
 
 class RunRequestTests(SimpleTestCase):

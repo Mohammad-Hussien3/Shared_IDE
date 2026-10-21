@@ -11,6 +11,7 @@ import {
   Pencil,
   RefreshCw,
   Search,
+  Share2,
   Trash2,
   X,
 } from "lucide-react";
@@ -116,6 +117,7 @@ export default function Explorer({
   onToggle,
   onCreate,
   onRename,
+  onShare,
   onDelete,
   onRefresh,
   dirtyIds,
@@ -310,6 +312,8 @@ export default function Explorer({
           </button>
           {context.node && (
             <>
+              {context.node.type !== "folder" && onShare && <button role="menuitem" disabled={busy}
+                onClick={() => act(() => onShare(context.node))}><Share2 size={15} />Share</button>}
               <div className="menu-divider" />
               <button
                 disabled={busy}

@@ -20,7 +20,7 @@ export default function EditorTabs({
             <button
               role="tab"
               aria-selected={file.id === activeId}
-              title={getFileName(file)}
+              title={`${getFileName(file)}${file.owner ? ` · ${file.owner.username} · ${file.permission}` : ""}`}
               onClick={() => onSelect(file)}
             >
               <FileIcon file={file} />

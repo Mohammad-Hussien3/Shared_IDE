@@ -109,6 +109,27 @@ describe("authentication HTTP client", () => {
     })]);
     expect(changed).not.toHaveBeenCalled();
   });
+  it("waits for an in-flight anonymous restore before starting Google", async () => {
+    const gate = deferred();
+    fetch.mockImplementation(async (url) => {
+      if (url.endsWith("/auth/csrf/")) return response({ csrf: "csrf" });
+      if (url.endsWith("/auth/refresh/")) return gate.promise;
+      if (url.endsWith("/auth/google/start/")) return response({ authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?state=one-time" });
+      throw new Error("Unexpected request");
+    });
+    const client = createAuthClient();
+    const restoring = client.restore();
+    const rejection = expect(restoring).rejects.toMatchObject({ status: 401 });
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => url.endsWith("/auth/refresh/"))).toBe(true));
+    const starting = client.startGoogle();
+    expect(fetch.mock.calls.some(([url]) => url.endsWith("/auth/google/start/"))).toBe(false);
+    gate.resolve(response({}, 401));
+    await rejection;
+    await expect(starting).resolves.toBe("https://accounts.google.com/o/oauth2/v2/auth?state=one-time");
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith("/auth/google/start/"))).toHaveLength(1);
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith("/auth/refresh/"))).toHaveLength(1);
+  });
+
   it("starts Google through a CSRF-protected credentialed POST", async () => {
     fetch.mockResolvedValueOnce(response({ csrf: 'csrf' }))
       .mockResolvedValueOnce(response({ authorization_url: 'https://accounts.google.com/o/oauth2/v2/auth?state=random' }));

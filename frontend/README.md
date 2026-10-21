@@ -8,7 +8,11 @@ projects, deployment labels, sampling, and the data intentionally excluded from 
 
 ## Docker Compose
 
-See [DOCKER.md](../DOCKER.md) for the full application stack, single-origin routing, Google callback settings, and the explicit Podman execution limitation.
+Configure the root and backend `.env` files from their examples, then run
+`docker compose up --build -d` from the repository root. Nginx serves the app at
+`http://localhost:8080` and proxies API/WebSocket requests to Django. PostgreSQL
+keeps its persistent volume. See [Redis deployment modes](#redis-deployment-modes)
+for collaboration and the execution limitation below.
 
 ## Development
 
@@ -184,6 +188,48 @@ Backend tests validate real signed test ID tokens with mocked Google token/JWKS 
 
 References: [Google OpenID Connect setup](https://developers.google.com/identity/openid-connect/openid-connect), [Authlib HTTP OAuth client](https://docs.authlib.org/en/stable/oauth2/client/http/index.html), and [Google button branding](https://developers.google.com/identity/branding-guidelines). The button uses Google's official gradient G asset and a locally served Google Sans Medium font; see `src/assets/google-sans-LICENSE.txt`. It does not load a third-party script or font during page rendering.
 
+### First-time Google signup and troubleshooting
+
+New and returning Google logins use the same session-issuance helper. The callback
+now creates/resolves the account and Google identity, creates the JWT session, and
+prepares its HttpOnly refresh cookie within one database transaction. It sends the
+success redirect only after that transaction commits. A session/response failure
+rolls back a new account and outstanding tokens; existing accounts and workspaces
+remain intact. OAuth state consumption stays outside that transaction so failures
+never make a used callback replayable. Workspaces are created explicitly from the
+dashboard, not automatically during login.
+
+React waits for `/api/auth/csrf/` and the credentialed `/api/auth/refresh/` request
+before entering the protected dashboard. Tests cover slow restoration and React
+StrictMode; no timer or automatic second Google login is used. A refresh `401` on
+an anonymous sign-in page is expected. A refresh `401` **after** a successful Google
+callback is a distinct failure and must be investigated.
+
+To verify in Docker:
+
+1. Run `docker compose up --build -d` and open the configured `APP_ORIGIN` using one
+   consistent hostname. The default is `http://localhost:8080`.
+2. Use a private browser window and a Google account not previously registered in
+   this application. Click **Continue with Google** once.
+3. The callback should redirect with `result=google_success`; the following refresh
+   should return `200`, and the dashboard should show **A fresh start**. The refresh
+   cookie must be HttpOnly, scoped to `/api/auth/`, and Secure on HTTPS deployments.
+4. Create a workspace, reload, sign out, and sign in with the same Google account.
+   The workspace and account should remain the same, without duplicates.
+5. If an error persists, record only the frontend error/result code and whether the
+   refresh request occurred before or after the callback. Backend diagnostics now
+   report a fixed stage (`state`, `provider`, `account`, or `session`) and exception
+   class/rejection code; they exclude provider messages, identities, tokens, and
+   credentials. Never share callback query strings, cookies, or Authorization headers.
+
+The transaction defect was reproduced with session/cookie failure injection. Normal
+first-time login already passed the baseline tests; the available runtime evidence
+did not identify the trigger for the reported live first-attempt error. The new
+checks verify first/returning login, immediate refresh, rollback, cookie flags,
+state/replay protection, and frontend initialization. A real-browser check with
+signed mocked Google responses also passed against an isolated PostgreSQL test
+database; live Google consent still needs the manual check above.
+
 ## Error handling
 
 `src/lib/errors.js` centralizes user-facing error messages. HTTP status and the CSRF retry code remain available to the client, while authentication, workspace dialogs, file operations, saves, and terminal service errors use the existing themed inline displays. Recognized backend validation messages become specific guidance; unknown validation text, server tracebacks, paths, and configuration details are not echoed. Add new safe validation templates there when adding API validation rules.
@@ -234,3 +280,156 @@ Vitest and React Testing Library cover filename/tree helpers, Explorer operation
 5. Run Python `input()`, C `scanf()`, and C++ `std::cin`; verify output, errors, Stop, and Clear.
 6. Switch panel tabs during execution; scroll upward and verify incoming output does not force the view to the bottom.
 7. Check both themes, preference persistence, pointer/keyboard resizing, panel maximize/collapse, and a narrow mobile viewport.
+
+## Real-time file collaboration
+
+The workspace activity bar has **Shared Files** (Shared With Me / Files I've Shared)
+and **Invitations** (incoming badge / sent history). Accepting an invitation refreshes
+the shared list immediately; background refresh runs every 15 seconds and on focus.
+Opening a shared file adds a UUID-keyed tab to the existing workspace. Sidebar and
+tab changes keep open collaborative documents connected; closing a tab releases its
+provider. Existing `/shared/:fileId` links also use this same workspace component.
+
+Owners can use **Share** in the editor or Explorer context menu, or **Manage
+collaborators** in Files I've Shared, to invite registered users, change permissions,
+cancel pending requests, and remove access. Shared access never exposes the owner's
+workspace tree. Viewers stay read only. Membership changes invalidate REST access,
+collaboration writes, presence, and the removed editor's running terminal.
+
+Yjs changes persist in PostgreSQL before a collaborative Run proceeds. Run then
+copies the saved document at the server's accepted start event into a private,
+immutable execution snapshot. Other editors can keep typing; execution never
+PATCHes whole-file content or writes its result back into the document. Once the
+runner starts, Terminal/Output identifies the executed document revision. A
+“File changed since this run” notice appears for new local or remote changes and
+remains attached to that execution, even after it finishes. Owner/editor
+runs use independent WebSockets and containers; stdout, stdin, and Stop belong only
+to the initiating session. The filename takes priority for language detection;
+ambiguous extensionless code requires an explicit Python/C/C++ choice. Collaborative
+runs do not rename a shared file. Owners can use the normal Rename action; private
+file Run continues to save and assign extensions as before.
+
+### Setup and endpoints
+
+The existing collaboration migrations are `0004_file_sharing` and
+`0005_collaborative_document`; this sidebar integration requires no new migration.
+
+```sh
+# PostgreSQL volume is retained. Compose starts Redis and applies migrations.
+docker compose up --build -d
+# Existing configured environment, in an isolated PostgreSQL test database:
+docker compose run --rm -e SENTRY_DISABLED=true -e REDIS_URL= -e REDIS_REQUIRED=false \
+  -e FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 \
+  backend python manage.py test --noinput
+cd frontend
+npm test
+npm run build
+```
+
+- `GET /api/sharing/files/`: accepted files shared with the current user.
+- `GET /api/sharing/files/?direction=owned`: owned files with active collaborators.
+- `GET /api/sharing/invitations/` (or `?direction=sent`): incoming / sent invitations.
+- `POST /api/sharing/invitations/:id/`: accept, decline, or cancel.
+- `GET/POST /api/sharing/files/:id/manage/`: owner membership list / invitation.
+- `PATCH/DELETE /api/sharing/files/:id/members/:userId/`: owner permission / removal.
+- `GET/PATCH /api/sharing/files/:id/`: authorized metadata/content / CRDT updates only.
+- WebSocket `/api/collaboration/files/:id/`: authenticated Yjs updates and presence.
+- WebSocket `/api/sharing/files/:id/run/`: owner/editor's personal saved snapshot run.
+  JWT authentication is the first frame; tokens never appear in the URL. The start
+  frame can include a supported `language` for ambiguous extensionless code only.
+
+Redis coordinates notifications across Django workers; PostgreSQL remains the
+source of durable document state. Authorization is checked on each write and run
+input, with membership notifications and a session watcher for idle connections.
+The existing authenticated WebSocket origin checks apply to both routes.
+
+**Docker execution remains disabled** (`CODE_EXECUTION_ENABLED=false`): the app
+container has no privileged Podman access or container socket. Collaboration and
+all other IDE features work in Compose. To execute code, use the existing host
+backend with rootless Podman and the configured Python/GCC images, or deploy an
+appropriately isolated execution service. Do not mount an unrestricted container
+socket into Django. Standard tests mock the runner; opt-in live Podman tests are
+separate.
+
+Manual verification: invite an editor and a viewer from separate accounts, accept
+through the sidebar, and open two same-named files as separate tabs. Switch all
+sidebar sections while editing; type concurrently in both editors and inspect
+colored cursors/selection labels. Refresh/reconnect to confirm persistence, remove
+access to confirm immediate denial, and (with execution enabled securely) run an
+interactive program while the other editor continues typing. The running snapshot
+and each user's terminal must remain independent.
+
+### Redis deployment modes
+
+- **Compose:** both backend and migration services receive
+  `REDIS_URL=redis://redis:6379/0` and `REDIS_REQUIRED=true`. These environment
+  entries override `backend/.env`. Redis has a health check and no published host
+  port; backend startup waits for it. All backend replicas on this private Docker
+  network share Redis notifications, presence and rate-limit cache. They must also
+  use the same PostgreSQL database, JWT signing key and browser-origin settings.
+- **Single-process host development:** `DJANGO_DEBUG=true` and an empty
+  `REDIS_URL` use the in-memory channel layer. Run one Django/ASGI process only.
+  Documents still persist in PostgreSQL, but presence and notifications cannot
+  cross processes. Development auto-reload restarts that single serving process.
+- **Multiple host processes or production:** set `REDIS_REQUIRED=true` and the
+  same private `REDIS_URL` in every process. Redis is required by default when
+  `DJANGO_DEBUG=false`; missing configuration fails during settings startup.
+  The application cannot discover how many independent workers you launch, so
+  explicitly require Redis even with DEBUG enabled when using multiple workers.
+  `REDIS_REQUIRED=false` is only an exception for single-process development or
+  isolated tests; never use it to bypass a production Redis outage.
+
+For host development with more than one backend process, start a loopback-only
+Redis separately (the Compose Redis hostname is not resolvable from the host):
+
+```sh
+docker run -d --name shared-ide-dev-redis \
+  -p 127.0.0.1:6379:6379 redis:7-alpine \
+  redis-server --save "" --appendonly no
+# In backend/.env for EVERY host backend process:
+# REDIS_REQUIRED=true
+# REDIS_URL=redis://127.0.0.1:6379/0
+```
+
+Use a private network and credentials/TLS as appropriate for remote Redis; never
+publish an unauthenticated Redis service on a public interface. A configured Redis
+outage raises transport errors; the backend does not fall back to in-memory state.
+PostgreSQL preserves document state and clients reconnect when Redis returns.
+The current `/healthz/` checks PostgreSQL, not Redis; monitor Redis separately
+(the Compose Redis health check covers its own service).
+
+### Redis idle connections and recovery
+
+With `channels_redis 4.3.0` and `redis-py 8.1.0`, the Redis client's default
+five-second read timeout can race Channels' five-second `BZPOPMIN` blocking
+receive. The existing channel host configuration explicitly sets
+`socket_timeout=None` and `socket_connect_timeout=5`. Keep both settings: idle
+receives must be allowed to wait, while connection establishment stays bounded.
+This applies to the channel layer, not HTTP requests or program execution limits.
+Do not set a competing `socket_timeout` query parameter in `REDIS_URL`.
+
+`workspace.tests.test_redis.RedisConfigurationTests` checks the effective connection
+pool options without a running Redis server. The opt-in integration test uses
+real Redis and an isolated PostgreSQL test database, leaving production data alone:
+
+```sh
+docker compose up -d postgres redis
+docker compose run --rm --no-deps \
+  -e SENTRY_DISABLED=true -e REDIS_URL=redis://redis:6379/15 -e REDIS_REQUIRED=true \
+  -e RUN_REDIS_INTEGRATION_TESTS=1 \
+  -e FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 \
+  backend python manage.py test workspace.tests.test_redis --noinput
+```
+
+Use a dedicated Redis database (15 above) for these tests. The ordinary unit suite
+keeps live integration tests skipped and needs no Redis or Podman. GitHub Actions
+also runs this test module separately against Redis 7, including an idle connection
+and an independent backend process that edits a document and revokes access. The
+cross-process check disables recovery polling to prove Redis notification delivery.
+A genuine Redis outage should
+produce observable infrastructure errors and reconnect after service restoration.
+Consumer teardown cancels presence watchers and stops private runners even when a
+channel-layer exception bypasses a normal disconnect frame. Redis cleanup failures
+remain observable and cannot prevent local resource cleanup or authorize access. The browser
+recovery check performed during this implementation verified stop/restart recovery
+and PostgreSQL persistence without reloading the page.

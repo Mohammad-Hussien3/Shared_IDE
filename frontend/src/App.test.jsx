@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import {
   act,
   fireEvent,
@@ -424,4 +425,49 @@ it("treats anonymous restore 401 as signed out without retrying on auth-page nav
   await screen.findByRole("heading", { name: "Welcome back" });
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(restores()).toHaveLength(1);
+});
+
+
+it.each(["new", "returning"])("waits for confirmed Google session restoration for a %s account in StrictMode", async (kind) => {
+  signedIn = true;
+  if (kind === "new") workspaces = [];
+  const gate = deferred();
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation((url, options) => url.endsWith("/auth/refresh/") ? gate.promise : original(url, options));
+  render(<StrictMode><MemoryRouter initialEntries={["/auth/google/callback?result=google_success"]}>
+    <AuthProvider><AppRoutes /></AuthProvider>
+  </MemoryRouter></StrictMode>);
+  await waitFor(() => expect(fetch.mock.calls.filter(([url]) => url.endsWith("/auth/refresh/"))).toHaveLength(1));
+  expect(screen.getByRole("status")).toHaveTextContent("Restoring your session…");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(fetch.mock.calls.some(([url]) => url.includes("/workspaces/"))).toBe(false);
+  const restored = { ...authData(), user: { ...authData().user, google_connected: true, has_password: false } };
+  await act(async () => gate.resolve(response(restored)));
+  await screen.findByRole("heading", { name: "Your workspaces" });
+  await screen.findByText(kind === "new" ? "A fresh start" : "Project one");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith("/auth/refresh/"))).toHaveLength(1);
+  expect(fetch.mock.calls.filter(([url, options]) => url.includes("/workspaces/") && options?.method === "POST")).toHaveLength(0);
+  expect(navigateToProvider).not.toHaveBeenCalled();
+  expect(Object.values(localStorage)).not.toContain(restored.access);
+  expect(Object.values(sessionStorage)).not.toContain(restored.access);
+});
+
+it("does not enter the IDE when Google session restoration fails and allows sign-in recovery", async () => {
+  const gate = deferred();
+  const original = fetch.getMockImplementation();
+  let restoring = true;
+  fetch.mockImplementation((url, options) => url.endsWith("/auth/refresh/") && restoring ? gate.promise : original(url, options));
+  mount("/auth/google/callback?result=google_success");
+  await waitFor(() => expect(fetch.mock.calls.some(([url]) => url.endsWith("/auth/refresh/"))).toBe(true));
+  await act(async () => gate.resolve(response({ detail: "Session expired" }, 401)));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Your session has expired.");
+  expect(fetch.mock.calls.some(([url]) => url.includes("/workspaces/"))).toBe(false);
+  expect(navigateToProvider).not.toHaveBeenCalled();
+  restoring = false;
+  fireEvent.click(screen.getByRole("link", { name: "Return to sign in" }));
+  fill("Email or username", "alice"); fill("Password", "Secure-password!79");
+  click("Sign in");
+  await screen.findByRole("heading", { name: "Your workspaces" });
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

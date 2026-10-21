@@ -8,6 +8,7 @@ class LegacyWorkspaceMigrationTests(TransactionTestCase):
         before = [('workspace', '0002_folder_file')]
         after = [('workspace', '0003_workspace_owner')]
         executor = MigrationExecutor(connection)
+        latest = executor.loader.graph.leaf_nodes()
         executor.migrate(before)
         try:
             apps = executor.loader.project_state(before).apps
@@ -24,4 +25,6 @@ class LegacyWorkspaceMigrationTests(TransactionTestCase):
             self.assertEqual(saved.folder_id, folder.pk)
             self.assertEqual(saved.workspace_id, workspace.pk)
         finally:
-            MigrationExecutor(connection).migrate(after)
+            # Restore the full schema, including collaboration tables, for the
+            # next TransactionTestCase rather than leaving the database at 0003.
+            MigrationExecutor(connection).migrate(latest)

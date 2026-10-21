@@ -36,15 +36,41 @@ vi.mock("../components/CodeEditor", () => ({
   ),
 }));
 
+const collaboration = vi.hoisted(() => ({ flush: vi.fn(), props: null, byFile: new Map(), mounts: [], cleanups: [] }));
+vi.mock("../components/CollaborativeEditor", async () => {
+  const { useEffect, useLayoutEffect, useState } = await import("react");
+  return { default: function SharedEditor(props) {
+    const { controllerRef } = props;
+    const fileId = props.file.id;
+    const [value, setValue] = useState(props.file.content || "");
+    useLayoutEffect(() => {
+      collaboration.byFile.set(props.file.id, props);
+      if (props.active !== false) collaboration.props = props;
+    });
+    useEffect(() => {
+      controllerRef.current = { flush: collaboration.flush };
+      const initial = collaboration.byFile.get(fileId);
+      collaboration.mounts.push(fileId);
+      initial.onStatus({ saved: true, permission: initial.file.permission || "owner", editable: initial.file.permission !== "view" });
+      return () => { collaboration.cleanups.push(fileId); controllerRef.current = null; };
+    }, [controllerRef, fileId]);
+    return <textarea aria-label="Code editor" value={value} readOnly={props.file.permission === "view"} onChange={event => {
+      setValue(event.target.value);
+      props.onContent(event.target.value);
+      props.onStatus({ saved: false, permission: props.file.permission || "owner" });
+    }} />;
+  } };
+});
+
 let api;
 let authClient;
-function workspaceView(workspaceId = WORKSPACE_ID) {
+function workspaceView(workspaceId = WORKSPACE_ID, initialSharedFileId) {
   return (
     <MemoryRouter>
       <AuthContext.Provider
         value={{ user: { id: 1, username: "tester" }, client: authClient }}
       >
-        <WorkspacePage key={workspaceId} workspaceId={workspaceId} />
+        <WorkspacePage key={workspaceId} workspaceId={workspaceId} initialSharedFileId={initialSharedFileId} />
       </AuthContext.Provider>
     </MemoryRouter>
   );
@@ -111,6 +137,8 @@ async function finish(socket, reason = "completed", exit_code = 0) {
 }
 beforeEach(() => {
   api = createApi();
+  collaboration.flush.mockReset(); collaboration.props = null;
+  collaboration.byFile.clear(); collaboration.mounts.length = 0; collaboration.cleanups.length = 0;
   authClient = {
     fetch: (...args) => fetch(...args),
     getAccessToken: async () => "test-access",
@@ -705,4 +733,227 @@ it("starting a new run clears prior output and creates a fresh socket", async ()
   expect(output()).not.toHaveTextContent("old output");
   expect(MockWebSocket.instances[1]).not.toBe(first);
   await finish(MockWebSocket.instances[1]);
+});
+
+
+describe("owner actions on a collaborative file", () => {
+  it("manual Save flushes the CRDT queue and waits for its saved status", async () => {
+    api.files[0].collaborative = true;
+    await mount(); await open(); edit('print("local")');
+    const gate = deferred(); collaboration.flush.mockReturnValue(gate.promise);
+    click("Save");
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    expect(collaboration.flush).toHaveBeenCalledOnce();
+    expect(status()).toHaveTextContent("Unsaved");
+    expect(mutations()).toHaveLength(0);
+    await act(async () => {
+      collaboration.props.onStatus({ saved: true });
+      gate.resolve('print("local")');
+    });
+    expect(status()).toHaveTextContent("Saved");
+    expect(mutations()).toHaveLength(0);
+  });
+
+  it("Run flushes shared edits then executes a private snapshot without overwriting newer changes", async () => {
+    api.files[0].collaborative = true;
+    await mount(); await open(); edit('print("local")');
+    const gate = deferred(); collaboration.flush.mockReturnValue(gate.promise);
+    click("Run"); fireEvent.keyDown(window, { key: "F5" });
+    expect(collaboration.flush).toHaveBeenCalledOnce();
+    expect(mutations()).toHaveLength(0);
+    expect(MockWebSocket.instances).toHaveLength(0);
+    await act(async () => {
+      collaboration.props.onContent('print("merged")');
+      collaboration.props.onStatus({ saved: true });
+      gate.resolve('print("merged")');
+    });
+    expect(mutations()).toHaveLength(0);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(status()).toHaveTextContent("Saved");
+    const socket = MockWebSocket.instances[0];
+    expect(socket.url).toContain(`/sharing/files/${FILE_ID}/run/`);
+    act(() => socket.open());
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: "start", language: "python" }));
+    edit('print("newer edit while running")');
+    click("Search"); click("Shared Files"); click("Invitations"); click("Explorer");
+    expect(socket.close).not.toHaveBeenCalled();
+    expect(collaboration.cleanups).toHaveLength(0);
+    await finish(socket);
+    expect(editor()).toHaveValue('print("newer edit while running")');
+    expect(status()).toHaveTextContent("Unsaved");
+    expect(mutations()).toHaveLength(0);
+  });
+
+  it("a failed shared flush prevents both legacy saving and execution", async () => {
+    api.files[0].collaborative = true;
+    await mount(); await open(); edit('print("pending")');
+    collaboration.flush.mockRejectedValue(new Error("Disconnected"));
+    click("Run");
+    await waitFor(() => expect(output()).toHaveTextContent("Wait for collaboration to reconnect and save before running."));
+    expect(mutations()).toHaveLength(0);
+    expect(MockWebSocket.instances).toHaveLength(0);
+    expect(status()).toHaveTextContent("Unsaved");
+  });
+});
+
+const sharingRoot = "http://api.test/api/sharing/";
+const sharedFile = {
+  id: "55555555-5555-4555-8555-555555555555", name: "main.py", language: "python",
+  content: 'print("shared")', owner: { id: 2, username: "alice" }, permission: "edit", collaborative: true,
+};
+function sharingLists({ files = [sharedFile], owned = [], incoming = [], sent = [] } = {}) {
+  for (const [path, data] of [["files/", files], ["files/?direction=owned", owned], ["invitations/", incoming], ["invitations/?direction=sent", sent]]) {
+    api.intercept("GET", sharingRoot + path, () => response(data));
+  }
+}
+async function openShared(file = sharedFile) {
+  api.intercept("GET", `${sharingRoot}files/${file.id}/`, () => response(file));
+  click("Shared Files");
+  const panel = screen.getByRole("region", { name: "Shared files panel" });
+  fireEvent.click(within(panel).getByRole("button", { name: new RegExp(`By ${file.owner.username}`) }));
+  await waitFor(() => expect(editor()).toHaveValue(file.content));
+}
+
+describe("collaboration inside the existing workspace", () => {
+  it("preserves a private draft and active terminal across every sidebar view", async () => {
+    sharingLists(); await mount(); await open();
+    const socket = await startRun(); edit("unsaved private draft");
+    const initialTerminal = terminal();
+    for (const section of ["Shared Files", "Search", "Invitations", "Explorer"]) {
+      click(section);
+      expect(editor()).toHaveValue("unsaved private draft");
+      expect(terminal()).toBe(initialTerminal);
+      expect(socket.close).not.toHaveBeenCalled();
+    }
+    await finish(socket);
+  });
+
+  it("opens owned and shared files with identical names as distinct tabs without navigation", async () => {
+    sharingLists(); await mount(); await open(); edit("owned draft");
+    await openShared(); edit("shared draft");
+    expect(screen.getAllByRole("tab", { name: /main.py/ })).toHaveLength(2);
+    expect(screen.getByRole("navigation", { name: "Workspace views" })).toBeInTheDocument();
+    const ownedTab = screen.getAllByRole("tab", { name: /main.py/ })[0];
+    fireEvent.click(ownedTab); expect(editor()).toHaveValue("owned draft");
+    fireEvent.click(screen.getAllByRole("tab", { name: /main.py/ })[1]);
+    expect(editor()).toHaveValue("shared draft");
+    expect(collaboration.mounts).toEqual([sharedFile.id]);
+    expect(collaboration.cleanups).toEqual([]);
+    expect(api.requests.filter(r => r.url === `${sharingRoot}files/${sharedFile.id}/`)).toHaveLength(1);
+    expect(api.requests.some(r => r.url === fileUrl(sharedFile.id))).toBe(false);
+    expect(screen.queryByRole("button", { name: "Share", exact: true })).not.toBeInTheDocument();
+  });
+
+  it("keeps two collaborative providers and documents mounted until their tabs close", async () => {
+    const second = { ...sharedFile, id: "66666666-6666-4666-8666-666666666666", name: "second.py", owner: { id: 3, username: "bob" } };
+    sharingLists({ files: [sharedFile, second] }); await mount(); await openShared();
+    edit("first draft");
+    api.intercept("GET", `${sharingRoot}files/${second.id}/`, () => response(second));
+    fireEvent.click(screen.getByRole("button", { name: /By bob/ }));
+    await waitFor(() => expect(editor()).toHaveValue(second.content));
+    fireEvent.click(screen.getByRole("tab", { name: /main.py/ }));
+    expect(editor()).toHaveValue("first draft");
+    expect(collaboration.cleanups).toEqual([]);
+    expect(collaboration.mounts).toEqual([sharedFile.id, second.id]);
+    click("Close second.py");
+    expect(collaboration.cleanups).toEqual([second.id]);
+  });
+
+  it("accepts invitations, clears the badge, and refreshes Shared With Me in place", async () => {
+    const invite = { id: "invite", file: sharedFile, sender: sharedFile.owner, recipient: { id: 1, username: "tester" }, status: "pending", permission: "edit" };
+    sharingLists({ files: [], incoming: [invite] }); await mount(); await open(); edit("my draft");
+    expect(await screen.findByLabelText("1 pending invitations")).toBeInTheDocument();
+    click("Invitations");
+    expect(screen.getByText("From alice · Can edit")).toBeInTheDocument();
+    api.intercept("POST", `${sharingRoot}invitations/invite/`, () => response({ ...invite, status: "accepted" }));
+    sharingLists(); click("Accept");
+    await waitFor(() => expect(screen.queryByLabelText("1 pending invitations")).not.toBeInTheDocument());
+    click("Shared Files");
+    expect(screen.getByRole("button", { name: /By alice/ })).toBeInTheDocument();
+    expect(editor()).toHaveValue("my draft");
+    expect(mutations()[0].body).toEqual({ action: "accept" });
+  });
+
+  it("declines incoming and cancels outgoing invitations with useful errors", async () => {
+    const invite = { id: "invite", file: sharedFile, sender: sharedFile.owner, recipient: { id: 3, username: "bob" }, status: "pending", permission: "view" };
+    sharingLists({ incoming: [invite], sent: [invite] }); await mount(); click("Invitations");
+    api.intercept("POST", `${sharingRoot}invitations/invite/`, () => response({}, 503));
+    click("Decline");
+    expect(await screen.findByRole("alert")).toHaveTextContent("temporarily unavailable");
+    api.intercept("POST", `${sharingRoot}invitations/invite/`, () => response({ status: "declined" }));
+    sharingLists({ sent: [invite] }); click("Decline");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Decline" })).not.toBeInTheDocument());
+    click("Sent"); expect(screen.getByText("To bob · Can view")).toBeInTheDocument();
+    api.intercept("POST", `${sharingRoot}invitations/invite/`, () => response({ status: "canceled" }));
+    sharingLists({ sent: [{ ...invite, status: "canceled" }] }); click("Cancel invitation");
+    await screen.findByText("canceled");
+    expect(mutations().map(r => r.body.action)).toEqual(["decline", "decline", "cancel"]);
+  });
+
+  it("opens the existing collaborator manager from Files I've Shared", async () => {
+    const owned = { ...sharedFile, permission: "owner", owner: { id: 1, username: "tester" }, collaborator_count: 1 };
+    sharingLists({ owned: [owned] }); await mount(); click("Shared Files");
+    api.intercept("GET", `${sharingRoot}files/${owned.id}/manage/`, () => response({ owner: owned.owner, collaborators: [{ user: sharedFile.owner, permission: "edit" }], invitations: [] }));
+    click("Manage collaborators");
+    const dialog = await screen.findByRole("dialog", { name: "Manage Collaborators" });
+    expect(await within(dialog).findByLabelText("Permission for alice")).toHaveValue("edit");
+    api.intercept("PATCH", `${sharingRoot}files/${owned.id}/members/2/`, () => response({ permission: "view" }));
+    api.intercept("GET", `${sharingRoot}files/${owned.id}/manage/`, () => response({ owner: owned.owner, collaborators: [{ user: sharedFile.owner, permission: "view" }], invitations: [] }));
+    fireEvent.change(within(dialog).getByLabelText("Permission for alice"), { target: { value: "view" } });
+    await within(dialog).findByText("Permission updated.");
+    expect(mutations()[0].body).toEqual({ permission: "view" });
+  });
+
+  it("blocks Run and Save on view-only or revoked documents, including shortcuts", async () => {
+    const viewerFile = { ...sharedFile, permission: "view" };
+    sharingLists({ files: [viewerFile] }); await mount(); await openShared(viewerFile);
+    expect(editor()).toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: /^Run(?:\s*F5)?$/ })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "F5" }); fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    expect(collaboration.flush).not.toHaveBeenCalled(); expect(MockWebSocket.instances).toHaveLength(0);
+    // The provider's server-authorized permission overrides stale list metadata.
+    act(() => collaboration.props.onStatus({ saved: true, permission: "edit", editable: true }));
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    act(() => collaboration.props.onStatus({ saved: false, fatal: true, editable: false }));
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "F5" });
+    expect(MockWebSocket.instances).toHaveLength(0);
+  });
+
+  it("uses the same workspace layout for shared links without fetching the owner's workspace", async () => {
+    sharingLists(); api.intercept("GET", `${sharingRoot}files/${sharedFile.id}/`, () => response(sharedFile));
+    render(workspaceView(null, sharedFile.id));
+    await waitFor(() => expect(editor()).toHaveValue(sharedFile.content));
+    expect(screen.getByRole("navigation", { name: "Workspace views" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "main.py" })).toBeInTheDocument();
+    expect(terminal()).toBeDefined();
+    expect(api.requests.some(r => r.url.includes("/workspaces/"))).toBe(false);
+  });
+});
+
+it('shows the executed revision and retains a changed-file notice after local or remote edits', async () => {
+  api.files[0].collaborative = true;
+  await mount(); await open();
+  collaboration.flush.mockResolvedValue('print("saved")');
+  const socket = await startRun();
+  act(() => socket.emit({ type: "ready", language: "python", revision: 0 }));
+  const snapshot = screen.getByRole("status", { name: "Executed snapshot" });
+  expect(snapshot).toHaveTextContent("main.py · revision 0");
+  expect(snapshot).toHaveTextContent("Saved snapshot");
+  act(() => collaboration.props.onStatus({ saved: false, pendingChanges: true, revision: 0 }));
+  expect(snapshot).toHaveTextContent("File changed since this run");
+  act(() => collaboration.props.onStatus({ saved: true, pendingChanges: false, revision: 1 }));
+  await finish(socket);
+  expect(snapshot).toHaveTextContent("main.py · revision 0");
+  expect(snapshot).toHaveTextContent("File changed since this run");
+  click("Run");
+  await waitFor(() => expect(MockWebSocket.instances).toHaveLength(2));
+  const next = MockWebSocket.instances[1];
+  act(() => next.open());
+  expect(screen.queryByRole("status", { name: "Executed snapshot" })).not.toBeInTheDocument();
+  act(() => next.emit({ type: "ready", language: "python", revision: 1 }));
+  expect(screen.getByRole("status", { name: "Executed snapshot" })).toHaveTextContent("revision 1");
+  act(() => collaboration.props.onStatus({ saved: true, pendingChanges: false, revision: 2 }));
+  expect(screen.getByRole("status", { name: "Executed snapshot" })).toHaveTextContent("File changed since this run");
+  await finish(next);
 });

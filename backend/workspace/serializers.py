@@ -4,11 +4,15 @@ from .execution import language_from_filename
 
 
 class FileTreeSerializer(serializers.ModelSerializer):
+    collaborative = serializers.SerializerMethodField()
+
+    def get_collaborative(self, obj):
+        return hasattr(obj, "document")
     type = serializers.SerializerMethodField()
 
     class Meta:
         model = File
-        fields = ["id", "name", "type", "language", 'content']
+        fields = ["id", "name", "type", "language", 'content', 'collaborative']
 
     def get_type(self, obj):
         return "file"
@@ -102,6 +106,10 @@ class FolderSerializer(WorkspaceRelationsMixin, serializers.ModelSerializer):
 
 
 class FileSerializer(WorkspaceRelationsMixin, serializers.ModelSerializer):
+    collaborative = serializers.SerializerMethodField()
+
+    def get_collaborative(self, obj):
+        return hasattr(obj, "document")
     content = serializers.CharField(required=False, allow_blank=True, trim_whitespace=False)
     folder = serializers.PrimaryKeyRelatedField(
         queryset=Folder.objects.all(),
@@ -119,6 +127,7 @@ class FileSerializer(WorkspaceRelationsMixin, serializers.ModelSerializer):
             "folder",
             "created_at",
             "updated_at",
+            "collaborative",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 

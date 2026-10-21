@@ -15,6 +15,9 @@ import GoogleCallbackPage from "./pages/GoogleCallbackPage";
 import { CheckEmailPage, VerifyEmailPage } from "./pages/EmailVerificationPage";
 import { ForgotPasswordPage, ResetPasswordPage } from "./pages/PasswordResetPage";
 import AuthCelebration from "./components/AuthCelebration";
+import SharingPage from "./pages/SharingPage";
+import SharedFilePage from "./pages/SharedFilePage";
+import "./sharing.css";
 import "./App.css";
 import "./accounts.css";
 import "./spark-workspace.css";
@@ -48,6 +51,8 @@ export function AppRoutes() {
     );
   return (
     <><AuthCelebration /><Routes>
+      <Route path="/sharing/:section" element={<Protected><SharingPage key={user?.id} /></Protected>} />
+      <Route path="/shared/:fileId" element={<Protected><SharedFilePage key={user?.id} /></Protected>} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/check-email" element={<CheckEmailPage />} />

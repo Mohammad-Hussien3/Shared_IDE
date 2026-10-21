@@ -8,6 +8,8 @@ x-backend: &backend
     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in root .env}
     POSTGRES_HOST: postgres
     POSTGRES_PORT: "5432"
+    REDIS_URL: redis://redis:6379/0
+    REDIS_REQUIRED: "true"
     DJANGO_ALLOWED_HOSTS: "${APP_HOSTS:-localhost,127.0.0.1},127.0.0.1"
     DJANGO_DEBUG: ${DJANGO_DEBUG:-true}
     AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
@@ -26,6 +28,25 @@ x-backend: &backend
   pids_limit: 128
 
 services:
+  redis:
+    image: redis:7-alpine
+    # Coordination and short-lived presence only; PostgreSQL stores document state.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    user: "999:999"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   postgres:
     image: postgres:16
     environment:
@@ -57,6 +78,8 @@ services:
   backend:
     <<: *backend
     depends_on:
+      redis:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       migrate:

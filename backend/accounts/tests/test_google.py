@@ -8,13 +8,14 @@ from urllib.parse import parse_qs, urlsplit
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import IntegrityError, OperationalError
 from django.test import TestCase, override_settings
 from django.utils import timezone
 from joserfc import jwt
 from joserfc.jwk import RSAKey
 from requests.exceptions import Timeout
 from rest_framework.test import APIClient, APITestCase
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
 from accounts import google
 from accounts.models import AuthSession, GoogleAuthAttempt, GoogleIdentity
@@ -228,6 +229,84 @@ class GoogleAuthenticationTests(APITestCase):
         self.fetch_token.assert_called_once_with(google.TOKEN_URL, grant_type='authorization_code',
             code='google-one-time-code', code_verifier=self.attempt.code_verifier, timeout=10, allow_redirects=False)
         self.get_keys.assert_called_once_with(google.JWKS_URL, timeout=10, allow_redirects=False)
+
+    def test_first_signup_and_returning_login_share_one_account_and_restore_immediately(self):
+        first_user_id = None
+        for login_number in range(2):
+            self.start()
+            callback = self.callback({'name': 'First Time User'})
+            self.assert_result(callback, 'google_success')
+            cookie = callback.cookies[settings.AUTH_REFRESH_COOKIE]
+            self.assertTrue(cookie['httponly'])
+            self.assertEqual(cookie['samesite'], 'Lax')
+            self.assertEqual(cookie['path'], '/api/auth/')
+            self.assertGreater(cookie['max-age'], 0)
+            self.assertTrue(callback.cookies[settings.CSRF_COOKIE_NAME]['httponly'])
+            self.assertFalse(get_user_model().objects.get().has_usable_password())
+            self.assertEqual(get_user_model().objects.count(), 1)
+            self.assertEqual(GoogleIdentity.objects.count(), 1)
+            self.assertEqual(AuthSession.objects.count(), login_number + 1)
+            # Workspaces are created explicitly by the user, never by login.
+            self.assertEqual(Workspace.objects.count(), 0)
+            self.csrf = self.client.get('/api/auth/csrf/').data['csrf']
+            restored = self.post('refresh')
+            self.assertEqual(restored.status_code, 200)
+            self.assertTrue(restored.data['user']['google_connected'])
+            current_id = restored.data['user']['id']
+            if first_user_id is None:
+                first_user_id = current_id
+            self.assertEqual(current_id, first_user_id)
+            self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {restored.data['access']}")
+            self.assertEqual(self.client.get('/api/auth/me/').status_code, 200)
+            self.assertEqual(self.client.get('/api/workspaces/').data, [])
+            self.assertEqual(self.post('logout').status_code, 204)
+            self.assertEqual(self.post('refresh').status_code, 401)
+            self.client.credentials()
+
+    def test_session_initialization_failure_rolls_back_new_account_and_tokens(self):
+        self.start()
+        # Token creation happens before AuthSession creation. A failure here
+        # must not leave a Google account that only works on a second attempt.
+        with self.assertLogs('accounts.google_views', level='WARNING') as logs:
+            with patch('accounts.views.AuthSession.objects.create', side_effect=OperationalError('private database detail')):
+                self.assert_result(self.callback(), 'google_failed')
+        self.assertEqual(logs.output, [
+            'WARNING:accounts.google_views:Google sign-in failed during session (OperationalError).'
+        ])
+        self.assertFalse(get_user_model().objects.exists())
+        self.assertFalse(GoogleIdentity.objects.exists())
+        self.assertFalse(AuthSession.objects.exists())
+        self.assertFalse(OutstandingToken.objects.exists())
+        self.assertFalse(Workspace.objects.exists())
+        self.assertFalse(GoogleAuthAttempt.objects.exists())
+        self.assertNotIn(settings.AUTH_REFRESH_COOKIE, self.client.cookies)
+        # Recover using a fresh single-use attempt, without an orphan account.
+        self.start()
+        self.assert_result(self.callback(), 'google_success')
+        self.assertEqual(get_user_model().objects.count(), 1)
+
+    def test_cookie_response_failure_rolls_back_account_and_session(self):
+        self.start()
+        with patch('accounts.views.session_response', side_effect=ValueError('private cookie configuration')):
+            self.assert_result(self.callback(), 'google_failed')
+        self.assertFalse(get_user_model().objects.exists())
+        self.assertFalse(GoogleIdentity.objects.exists())
+        self.assertFalse(AuthSession.objects.exists())
+        self.assertFalse(OutstandingToken.objects.exists())
+        self.assertNotIn(settings.AUTH_REFRESH_COOKIE, self.client.cookies)
+
+    def test_failed_returning_session_preserves_existing_identity_and_workspace(self):
+        user = google.resolve_user('google-stable-subject', 'new@example.com', name='Original Name')
+        workspace = Workspace.objects.create(owner=user, name='Keep ownership')
+        self.start()
+        with patch('accounts.views.AuthSession.objects.create', side_effect=OperationalError('private database detail')):
+            self.assert_result(self.callback(), 'google_failed')
+        self.assertEqual(get_user_model().objects.count(), 1)
+        self.assertEqual(GoogleIdentity.objects.get().user_id, user.pk)
+        workspace.refresh_from_db()
+        self.assertEqual(workspace.owner_id, user.pk)
+        self.assertFalse(AuthSession.objects.exists())
+        self.assertFalse(OutstandingToken.objects.exists())
 
     def test_returning_subject_keeps_workspaces_even_when_email_changes(self):
         user = get_user_model().objects.create_user('owner', email='old@example.com')

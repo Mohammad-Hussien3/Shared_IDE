@@ -12,6 +12,15 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
       postgres:
         image: postgres:16
         env:
@@ -38,6 +47,9 @@ jobs:
       POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: "5432"
       POSTGRES_SSLMODE: disable
+      REDIS_URL: ""
+      REDIS_REQUIRED: "false"
+      RUN_REDIS_INTEGRATION_TESTS: "0"
       RUN_PODMAN_INTEGRATION_TESTS: "0"
       SENTRY_DSN: ""
       SENTRY_DISABLED: "true"
@@ -56,6 +68,12 @@ jobs:
         run: python manage.py migrate --noinput
       - name: Run Django tests
         run: python manage.py test --noinput
+      - name: Verify Redis and cross-process collaboration
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/15
+          REDIS_REQUIRED: "true"
+          RUN_REDIS_INTEGRATION_TESTS: "1"
+        run: python manage.py test workspace.tests.test_redis --noinput
 
   frontend:
     name: Frontend tests and build

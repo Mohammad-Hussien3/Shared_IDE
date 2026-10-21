@@ -87,6 +87,7 @@ export function createApi() {
         name: "Test workspace",
         children: children(),
       });
+    if (method === "GET" && /\/sharing\/(files|invitations)\/(\?.*)?$/.test(url)) return response([]);
     const match = url.match(/\/(files|folders)\/(?:([^/]+)\/)?$/);
     if (!match || !url.startsWith(apiRoot))
       throw new Error(`Unexpected request ${method} ${url}`);

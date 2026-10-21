@@ -5,15 +5,18 @@ import logging
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.core.exceptions import ValidationError
+from django.db import transaction
+from redis.exceptions import RedisError
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.exceptions import TokenError
 
 from accounts.authentication import authenticate_access_token
 from Shared_IDE.monitoring import capture_unexpected
 
-from .execution import SUPPORTED_RUNNERS, detect_language
+from .execution import SUPPORTED_RUNNERS, detect_language, has_filename_extension
 from .interactive_runner import INTERACTIVE_TIMEOUT_SECONDS, InteractiveRunner
 from .models import File
+from .sharing import permission_for
 from .runner import RunnerUnavailable
 
 
@@ -24,6 +27,15 @@ SESSION_CHECK_SECONDS = 1
 
 class TerminalConsumer(AsyncJsonWebsocketConsumer):
     """A WebSocket owns exactly one isolated program and its terminal input."""
+
+    async def __call__(self, scope, receive, send):
+        try:
+            return await super().__call__(scope, receive, send)
+        finally:
+            # A failed channel-layer receive bypasses the normal disconnect
+            # event. It must still stop this socket's private program and tasks.
+            if hasattr(self, 'disconnected'):
+                await self.disconnect(1006)
 
     async def connect(self):
         self.runner = None
@@ -97,6 +109,7 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             self.access_token = token
             self.auth_task.cancel()
             self.auth_task = asyncio.create_task(self._watch_session())
+            await self._after_authenticate()
             await self._send({'type': 'authenticated'})
             return
         if not isinstance(content, dict):
@@ -113,7 +126,11 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
                 await self._send({"type": "error", "message": "This terminal session has already started."})
                 return
             self.started = True
-            self.run_task = asyncio.create_task(self._run_session())
+            # Copy saved source at the accepted start event, never retain a live
+            # model or write execution results back over a newer document.
+            snapshot = await self._saved_file()
+            self.requested_language = content.get('language')
+            self.run_task = asyncio.create_task(self._run_session(snapshot))
         elif event_type == "input":
             if not self.ready or self.runner is None:
                 return
@@ -161,9 +178,15 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             workspace__owner=self.user,
         ).values("name", "content").first()
 
-    async def _run_session(self):
+    async def _after_authenticate(self):
+        pass
+
+    def _detect_language(self, file):
+        return detect_language(file['name'], file['content'])
+
+    async def _run_session(self, snapshot=None):
         try:
-            await asyncio.wait_for(self._execute_saved_file(), timeout=INTERACTIVE_TIMEOUT_SECONDS)
+            await asyncio.wait_for(self._execute_saved_file(snapshot), timeout=INTERACTIVE_TIMEOUT_SECONDS)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError:
@@ -190,14 +213,13 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             if not self.disconnected:
                 await self.close()
 
-    async def _execute_saved_file(self):
-        file = await self._saved_file()
+    async def _execute_saved_file(self, file):
         if file is None:
             raise RunnerUnavailable("File was not found in this workspace.")
         source = file["content"]
         if len(source) > 65536:
             raise RunnerUnavailable("The file is too large to run (64 KB maximum).")
-        language, detection_error = detect_language(file["name"], source)
+        language, detection_error = self._detect_language(file)
         if detection_error:
             raise RunnerUnavailable(detection_error)
         if language not in SUPPORTED_RUNNERS:
@@ -213,7 +235,8 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.ready = True
-        await self._send({"type": "ready", "language": language})
+        await self._send({"type": "ready", "language": language,
+                          **({'revision': file['revision']} if 'revision' in file else {})})
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         async for chunk in self.runner.output_chunks():
             text = decoder.decode(chunk)
@@ -239,3 +262,61 @@ class TerminalConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json(payload)
         except (OSError, RuntimeError):
             self.disconnected = True
+
+
+class SharedTerminalConsumer(TerminalConsumer):
+    """A private run of a saved shared document, never the owner's terminal.
+
+    Only the owner and accepted editors may run. Authorization uses the same
+    File row lock as CRDT writes and membership changes when copying a snapshot.
+    The inherited runner retains every sandbox limit and enabled/disabled gate.
+    """
+
+    @database_sync_to_async
+    def _saved_file(self):
+        with transaction.atomic():
+            file = File.objects.select_for_update(of=('self',)).select_related(
+                'workspace__owner',
+            ).filter(pk=self.scope['url_route']['kwargs']['file_id'], document__isnull=False).first()
+            if file is None or permission_for(file, self.user) not in ('owner', 'edit'):
+                return None
+            # Read after obtaining the File lock, in a separate query: a JOIN
+            # evaluated before a concurrent commit could pair new content with
+            # an older revision under PostgreSQL READ COMMITTED isolation.
+            return {'name': file.name, 'content': file.content, 'revision': file.document.revision}
+
+    def _detect_language(self, file):
+        language, error = super()._detect_language(file)
+        # Explicit choice is only a fallback for ambiguous extensionless code;
+        # it cannot override a filename or a confidently detected language.
+        choice = getattr(self, 'requested_language', None)
+        if error and not has_filename_extension(file['name']) and isinstance(choice, str) and choice in SUPPORTED_RUNNERS:
+            return choice, None
+        return language, error
+
+    async def _after_authenticate(self):
+        from .collaboration import room
+        self.execution_group = room(self.scope['url_route']['kwargs']['file_id']) + '.runs'
+        await self.channel_layer.group_add(self.execution_group, self.channel_name)
+        # Close the gap between initial authorization and joining notifications.
+        if not await self._check_access():
+            await self.disconnect(4403)
+            await self.close(code=4403)
+
+    async def execution_access_changed(self, event):
+        if not self.disconnected and not await self._check_access():
+            await self._send({'type': 'error', 'message': 'Your access to this file has changed.'})
+            await self.disconnect(4403)
+            await self.close(code=4403)
+
+    async def disconnect(self, close_code):
+        try:
+            group = getattr(self, 'execution_group', None)
+            self.execution_group = None
+            if group:
+                await asyncio.wait_for(self.channel_layer.group_discard(group, self.channel_name), timeout=5)
+        except (RedisError, asyncio.TimeoutError) as exc:
+            capture_unexpected(exc, 'websocket')
+            logger.warning('Terminal membership cleanup could not reach Redis.')
+        finally:
+            await super().disconnect(close_code)

@@ -39,6 +39,7 @@ const TerminalPanel = forwardRef(function TerminalPanel(
     runStage,
     theme,
     problems = [],
+    snapshot = null,
     onProblemSelect,
     onMaximize,
   },
@@ -250,6 +251,12 @@ const TerminalPanel = forwardRef(function TerminalPanel(
           />
         </div>
       </div>
+      {!collapsed && snapshot && <div className="execution-snapshot" role="status" aria-label="Executed snapshot">
+        <span title={snapshot.filename}>{snapshot.filename} · revision {snapshot.revision}</span>
+        <span className={snapshot.changed ? "snapshot-changed" : ""}>
+          {snapshot.changed ? "File changed since this run" : "Saved snapshot"}
+        </span>
+      </div>}
       <div className={`panel-content ${collapsed ? "hidden" : ""}`}>
         <div
           className={`terminal-content ${tab !== "terminal" ? "hidden" : ""}`}

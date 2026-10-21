@@ -4,6 +4,10 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // y-monaco still uses Monaco's pre-0.55 deep import; use the current export.
+  resolve: { alias: {
+    'monaco-editor/esm/vs/editor/editor.api.js': 'monaco-editor/editor/editor.api.js',
+  } },
   server: {
     port: 5173,
     strictPort: true,
