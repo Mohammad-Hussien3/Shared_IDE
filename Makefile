@@ -38,13 +38,38 @@ runner-images-check:
 	podman info --format 'rootless={{.Host.Security.Rootless}} graphroot={{.Store.GraphRoot}}'
 
 up:
+	python3 scripts/runner-service.py start-if-enabled
 	docker compose up --build -d
 
 stop:
 	docker compose stop
+	python3 scripts/runner-service.py stop
 
 logs:
 	docker compose logs -f backend frontend
 
 docker-migrate:
 	docker compose run --rm migrate
+
+.PHONY: runner-setup runner-check runner-start runner-stop runner-status runner-enable
+runner-setup:
+	python3 scripts/runner-service.py setup
+
+runner-check:
+	python3 scripts/runner-service.py check
+
+runner-start:
+	python3 scripts/runner-service.py start
+
+runner-stop:
+	python3 scripts/runner-service.py stop
+
+runner-status:
+	python3 scripts/runner-service.py status
+
+runner-enable:
+	python3 scripts/runner-service.py enable
+
+.PHONY: runner-test
+runner-test:
+	docker compose exec -T backend python -m workspace.worker_smoke

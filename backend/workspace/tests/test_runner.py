@@ -21,7 +21,7 @@ class RunnerCommandTests(RunnerEnvironmentMixin, SimpleTestCase):
         for language in ['python', 'c', 'cpp']:
             with self.subTest(language=language):
                 command, image = runner.build_runner_command(language, 'source', 'test')
-                for option in ['--rm', '--pull=never', '--network=none', '--read-only', '--cap-drop=all', '--security-opt=no-new-privileges', '--user=65534:65534', '--cpus=0.5', '--pids-limit=32', '--ulimit=cpu=5:5']:
+                for option in ['--rm', '--timeout=65', '--log-driver=none', '--pull=never', '--network=none', '--read-only', '--cap-drop=all', '--security-opt=no-new-privileges', '--user=65534:65534', '--cpus=0.5', '--pids-limit=32', '--ulimit=cpu=5:5']:
                     self.assertIn(option, command)
                 self.assertTrue(any(arg.startswith('--memory=') for arg in command))
                 self.assertFalse(any(arg.startswith(('--volume', '--privileged')) for arg in command))

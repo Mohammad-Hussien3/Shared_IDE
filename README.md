@@ -42,7 +42,7 @@ The **Spark Lab** interface includes dark and light themes, resizable panels, ed
 *Screenshots and a collaboration demo can be added here once those assets are available.*
 
 > [!IMPORTANT]
-> **Execution availability:** Docker Compose runs the web application and collaboration services, but intentionally disables code execution. Python, C, and C++ execution requires the host Django backend with a prepared rootless Podman environment. A separate containerized runner service is not included.
+> **Execution availability:** Execution is disabled until configured. Docker Compose can use the restricted rootless Podman host worker over an authenticated private Unix socket. See [execution setup](EXECUTION.md) for local/VPS setup, sandbox checks and live tests. Django never receives a Docker/Podman engine socket.
 
 ## Quick start
 
@@ -157,7 +157,8 @@ flowchart LR
     Proxy --> Backend[Django, DRF, Channels]
     Backend --> DB[(PostgreSQL)]
     Backend <--> Redis[(Redis)]
-    Backend -. host execution only .-> Runner[Isolated Podman containers]
+    Backend -. authenticated Unix socket .-> Worker[Restricted host worker]
+    Worker --> Runner[Rootless Podman containers]
 ```
 
 PostgreSQL stores accounts, workspace ownership, files, invitations, and collaborative document state. Redis distributes notifications and shares cache state between backend processes. Each execution WebSocket owns a private runner/terminal session.
@@ -214,7 +215,7 @@ Choose the workflow that fits your needs:
 | Node.js 22 and npm | Supplied by frontend build image | Required; matches CI and Docker |
 | PostgreSQL | Compose supplies version 16 | Required; Compose database can be reused |
 | Redis | Compose supplies version 7 | Required for multiple backend processes |
-| Rootless Podman on Linux | Execution disabled in app container | Required only for code execution |
+| Rootless Podman on Linux | Optional host worker for execution | Required only for code execution |
 | GNU Make | Optional shortcuts | Optional shortcuts |
 
 The interactive runner uses Linux PTYs and resource limits. The complete Compose stack can be used without enabling the host runner.
@@ -367,7 +368,7 @@ Vite uses a strict port of 5173. Use one browser hostname consistently; direct c
 | [Backend `.env.example`](backend/.env.example) → `backend/.env` | Django secrets, SMTP, OAuth, host DB settings, runner, monitoring |
 | [Frontend `.env.example`](frontend/.env.example) → `frontend/.env` | Local Vite API/monitoring configuration |
 
-Django's loader preserves existing process environment values. Compose's explicit environment entries override `backend/.env`, including database host/port, Redis URL, public origins, Google callback, and disabled code execution.
+Django's loader preserves existing process environment values. Compose's explicit environment entries override `backend/.env`, including database host/port, Redis URL, public origins, Google callback, and the root `.env` execution switch.
 
 Never put private credentials in `VITE_*` variables: they are included in browser-visible builds. Docker excludes frontend `.env` files and passes an explicit allowlist of public build arguments instead. Restart backend processes after runtime configuration changes; rebuild frontend assets after build-time changes.
 
@@ -383,7 +384,7 @@ Never put private credentials in `VITE_*` variables: they are included in browse
 | `FRONTEND_URL`, `FRONTEND_ORIGINS` | Frontend links and allowed origins |
 | `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAMESITE` | Refresh-cookie security |
 | `REDIS_URL`, `REDIS_REQUIRED` | Collaboration coordination |
-| `CODE_EXECUTION_ENABLED` | Host-only execution switch; disabled in Compose |
+| `CODE_EXECUTION_ENABLED` | Opt-in execution switch; root `.env` controls Compose, backend `.env` controls native Django |
 | `VITE_API_URL` | Frontend API prefix, usually `/api` |
 
 Use the provided `.env.example` files for exact values. Never commit secrets or expose them through `VITE_*` variables.
@@ -490,7 +491,24 @@ The channel layer uses `socket_timeout=None` and `socket_connect_timeout=5` so i
 
 ## Code execution
 
-### Set up Podman for the host backend
+### Docker Compose: restricted host worker
+
+Follow [EXECUTION.md](EXECUTION.md) before enabling execution. In brief:
+
+```bash
+make runner-setup
+make runner-images
+make runner-check
+# Set CODE_EXECUTION_ENABLED=true and RUNNER_GID=<id -g> in root .env.
+make up
+make runner-test
+```
+
+`make up` starts the host worker when configured. `make stop` stops it alongside
+Compose without removing database volumes. The worker is private, authenticated,
+non-root and bounded; no container engine socket is mounted into Django.
+
+### Native Django: local Podman
 
 As the same OS user that runs Django:
 
@@ -525,7 +543,7 @@ Optional existing overrides are `CODE_RUNNER_ENGINE`, `PYTHON_RUNNER_IMAGE`, `CP
 | Interactive input | 64 KiB total, 4 KiB per chunk |
 | Container restrictions | No networking, read-only root, non-root user, dropped capabilities, bounded temporary filesystems, CPU/file limits |
 
-The Docker application container has no privileged runner access. Do not mount an unrestricted container socket or enable privileged mode to bypass the Compose execution restriction. A restricted external execution service requires separate implementation/deployment work.
+The Docker application container has no privileged runner access. Its optional host worker uses the same sandbox limits, a private authenticated protocol, bounded concurrency, crash cleanup and startup security checks. See [EXECUTION.md](EXECUTION.md).
 
 ## Production deployment
 
@@ -538,7 +556,7 @@ DJANGO_DEBUG=false
 AUTH_COOKIE_SECURE=true
 ```
 
-Start with `docker compose up --build -d`. TLS termination, trusted forwarded headers, certificates, and backups require deployment-specific setup; the Compose stack does not provide them automatically. Code execution remains disabled in Compose.
+Start with `docker compose up --build -d`. TLS termination, trusted forwarded headers, certificates, and backups require deployment-specific setup; the Compose stack does not provide them automatically. Enable execution only after completing the [host worker setup and security checks](EXECUTION.md).
 
 ## API documentation
 
@@ -682,7 +700,7 @@ npm run build
 - **Google OAuth issues:** Confirm the callback URI matches exactly, including scheme, port, path, and trailing slash.
 - **CSRF/cookie issues:** Use a consistent hostname, matching frontend origins, and correct HTTPS cookie settings.
 - **Redis issues:** Share the same private Redis instance across backend workers. Single-process development can opt out explicitly.
-- **Execution unavailable:** Compose intentionally disables execution. Configure rootless Podman on the host backend to enable it.
+- **Execution unavailable:** Execution defaults to disabled. Configure the [restricted host worker](EXECUTION.md), run `make runner-check`, set the root `.env` flag/group, and use `make up`.
 - **Frontend changes not appearing:** Rebuild Docker images; Compose does not mount frontend source for hot reload.
 
 Useful Makefile shortcuts include `make up`, `make stop`, `make logs`, `make runback`, `make runfront`, `make migrate`, `make runner-images`, and `make runner-images-check`.

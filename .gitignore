@@ -22,3 +22,6 @@ __pycache__/
 # Environment variables
 .env
 backend/staticfiles/
+
+# Private execution worker socket, credential and lock
+.runtime/

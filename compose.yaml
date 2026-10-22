@@ -17,8 +17,10 @@ x-backend: &backend
     FRONTEND_ORIGINS: ${APP_ORIGIN:-http://localhost:8080}
     GOOGLE_FRONTEND_ORIGIN: ${APP_ORIGIN:-http://localhost:8080}
     GOOGLE_REDIRECT_URI: "${APP_ORIGIN:-http://localhost:8080}/api/auth/google/callback/"
-    # Local Podman cannot safely run inside this application container.
-    CODE_EXECUTION_ENABLED: "false"
+    # Only the restricted host worker protocol; never mount an engine socket.
+    CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-false}
+    CODE_RUNNER_TRANSPORT: unix
+    CODE_WORKER_DIRECTORY: /run/shared-ide-worker
   init: true
   read_only: true
   tmpfs:
@@ -77,6 +79,11 @@ services:
 
   backend:
     <<: *backend
+    group_add:
+      - "${RUNNER_GID:-1000}"
+    volumes:
+      # Dedicated socket/credential directory; :z retains SELinux enforcement.
+      - ./.runtime/runner:/run/shared-ide-worker:ro,z
     depends_on:
       redis:
         condition: service_healthy

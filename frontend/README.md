@@ -343,13 +343,11 @@ source of durable document state. Authorization is checked on each write and run
 input, with membership notifications and a session watcher for idle connections.
 The existing authenticated WebSocket origin checks apply to both routes.
 
-**Docker execution remains disabled** (`CODE_EXECUTION_ENABLED=false`): the app
-container has no privileged Podman access or container socket. Collaboration and
-all other IDE features work in Compose. To execute code, use the existing host
-backend with rootless Podman and the configured Python/GCC images, or deploy an
-appropriately isolated execution service. Do not mount an unrestricted container
-socket into Django. Standard tests mock the runner; opt-in live Podman tests are
-separate.
+**Docker execution is opt-in.** Configure the authenticated rootless Podman host
+worker following [EXECUTION.md](../EXECUTION.md). Django connects over a private
+Unix socket and never receives an engine socket. The existing Run/terminal UI and
+saved collaboration snapshots use this worker without frontend changes. Ordinary
+tests mock execution; `make runner-test` performs live checks through Compose.
 
 Manual verification: invite an editor and a viewer from separate accounts, accept
 through the sidebar, and open two same-named files as separate tabs. Switch all

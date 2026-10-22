@@ -14,7 +14,8 @@ from accounts.authentication import authenticate_access_token
 from Shared_IDE.monitoring import capture_unexpected
 
 from .execution import SUPPORTED_RUNNERS, detect_language, has_filename_extension
-from .interactive_runner import INTERACTIVE_TIMEOUT_SECONDS, InteractiveRunner
+from .interactive_runner import INTERACTIVE_TIMEOUT_SECONDS
+from .worker_client import interactive_runner as InteractiveRunner
 from .models import File
 from .sharing import permission_for
 from .runner import RunnerUnavailable

@@ -52,6 +52,8 @@ def build_runner_command(language, source, name, interactive=False):
         RUNNER_ENGINE,
         "run",
         "--rm",
+        "--timeout=65",  # conmon enforces this even if the worker dies
+        "--log-driver=none",  # never persist submitted source/output in container logs
         f"--pull={RUNNER_PULL_POLICY}",
         f"--name={name}",
         "--network=none",
@@ -72,6 +74,9 @@ def build_runner_command(language, source, name, interactive=False):
         "--env=HOME=/tmp",
         "--env=PYTHONDONTWRITEBYTECODE=1",
     ]
+    label = os.getenv("CODE_RUNNER_LABEL")
+    if label:
+        command.append(f"--label=shared-ide-worker={label}")
     if interactive:
         command.extend(["--interactive", "--tty", "--detach-keys=", "--env=TERM=xterm-256color"])
     command.extend([image, *program])
@@ -80,6 +85,17 @@ def build_runner_command(language, source, name, interactive=False):
 
 def run_program(language, source):
     """Execute code in a disposable container and collect bounded output."""
+    transport = os.getenv('CODE_RUNNER_TRANSPORT', 'local')
+    if transport == 'unix':
+        import asyncio
+        from .worker_client import request
+        response = asyncio.run(request({'type': 'run', 'mode': 'batch',
+                                        'language': language, 'source': source}))
+        if response.get('type') != 'result':
+            raise RunnerUnavailable('Invalid execution worker response.')
+        return response['result']
+    if transport != 'local':
+        raise RunnerUnavailable('Invalid execution transport configuration.')
     name = f"workspace-run-{uuid.uuid4().hex}"
     command, image = build_runner_command(language, source, name)
     _ensure_image_available(image)
@@ -177,7 +193,7 @@ def run_python(source):
 
 def _ensure_image_available(image):
     """Check the image in the calling backend user's Podman store, without pulling."""
-    if os.getenv('CODE_EXECUTION_ENABLED', 'true').lower() not in {'1', 'true', 'yes', 'on'}:
+    if os.getenv('CODE_EXECUTION_ENABLED', 'false').lower() not in {'1', 'true', 'yes', 'on'}:
         raise RunnerUnavailable('Code execution is not configured for this deployment.')
     if not shutil.which(RUNNER_ENGINE):
         raise RunnerUnavailable(
